@@ -1,84 +1,96 @@
 import os
 import discord
-from discord import app_commands
-import yfinance as yf
+from discord import app_commands, File
 from flask import Flask
 from threading import Thread
 from datetime import datetime
 from dotenv import load_dotenv
-import random  # add this at the top of your file
+import random
+import yfinance as yf
+import matplotlib.pyplot as plt
+import io
 
-# === Flask Web Server to Keep Replit Alive ===
-app = Flask('')
-
+# === Load .env ===
 load_dotenv()
-
-@app.route('/')
-def home():
-    return "I'm alive!"
-
-
-def run():
-    app.run(host='0.0.0.0', port=8080)
-
-
-Thread(target=run).start()
 
 # === Discord Bot Setup ===
 intents = discord.Intents.default()
 client = discord.Client(intents=intents)
 tree = app_commands.CommandTree(client)
 
-
-# === Slash Command: Hello ===
-@tree.command(name="predict", description="Predict Tesla's stock price")
-@app_commands.describe(year="Target year (must be this year or later)")
-async def tesla(interaction: discord.Interaction, year: int):
+# === Forecasting Logic ===
+def calculate_tsla_forecast():
     current_year = datetime.now().year
-    if year < current_year:
-        await interaction.response.send_message(
-            "❌ Please enter a year that is this year or later.")
-        return
-
     stock = yf.Ticker("TSLA")
     data = stock.history(period="1d")
-    if data.empty:
-        await interaction.response.send_message(
-            "❌ Couldn't fetch Tesla stock data.")
-        return
+    current_price = data['Close'].iloc[-1] if not data.empty else 250  # fallback
 
-    current_price = data['Close'].iloc[-1]
-    years_ahead = year - current_year
-    base_prediction = current_price * (2**years_ahead)
+    forecast = []
+    for i in range(11):
+        year = current_year + i
+        base = current_price * (2 ** i)
+        forecast.append({
+            "year": year,
+            "bear": base * 0.5,
+            "normal": base,
+            "bull": base * 1.5,
+            "hyperbull": base * 2
+        })
+    return forecast
 
-    # 🎲 Add random variation ±10%
-    fluctuation = random.uniform(-0.10, 0.10)
-    final_prediction = base_prediction * (1 + fluctuation)
+# === /table Command ===
+@tree.command(name="table", description="Show Tesla valuation forecast as a table")
+async def table(interaction: discord.Interaction):
+    forecast = calculate_tsla_forecast()
+    lines = ["```", f"{'Year':<6}{'Bear':>12}{'Normal':>12}{'Bull':>12}{'Hyperbull':>12}"]
+    for row in forecast:
+        lines.append(f"{row['year']:<6}${row['bear']:>11,.0f}${row['normal']:>11,.0f}${row['bull']:>11,.0f}${row['hyperbull']:>11,.0f}")
+    lines.append("```")
+    await interaction.response.send_message("\n".join(lines))
 
-    await interaction.response.send_message(
-        f"📈 Tesla stock in {current_year}: ${current_price:.2f}\n"
-        f"🔮 Predicted price in {year}: "
-        f"**${final_prediction:,.2f}**")
+# === /chart Command ===
+@tree.command(name="chart", description="Show Tesla valuation forecast as a chart")
+async def chart(interaction: discord.Interaction):
+    await interaction.response.defer()
+    forecast = calculate_tsla_forecast()
 
+    years = [f["year"] for f in forecast]
+    bear = [f["bear"] for f in forecast]
+    normal = [f["normal"] for f in forecast]
+    bull = [f["bull"] for f in forecast]
+    hyper = [f["hyperbull"] for f in forecast]
 
-# === Sync Commands When Bot Is Ready ===
+    plt.figure(figsize=(10, 6))
+    plt.plot(years, bear, label="Bear", linestyle='dashed')
+    plt.plot(years, normal, label="Normal", linewidth=2)
+    plt.plot(years, bull, label="Bull", linestyle='dotted')
+    plt.plot(years, hyper, label="Hyperbull", linestyle='dashdot')
+
+    plt.title("Tesla Valuation Forecast")
+    plt.xlabel("Year")
+    plt.ylabel("Stock Price ($)")
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png')
+    buf.seek(0)
+    plt.close()
+
+    await interaction.followup.send("Tesla Valuation Forecast Chart:", file=File(buf, filename="tsla_forecast.png"))
+
+# === On Ready Event ===
 @client.event
 async def on_ready():
-
-    # 🎮 Set activity status
-    activity = discord.Game(name="with its balls")
-    await client.change_presence(status=discord.Status.online,
-                                 activity=activity)
-
+    activity = discord.Game(name="TSLA valuations")
+    await client.change_presence(status=discord.Status.online, activity=activity)
     print(f"✅ Logged in as {client.user} (ID: {client.user.id})")
     try:
-        synced = await tree.sync()  # global sync
-        print(
-            f"🌍 Synced {len(synced)} global slash command(s): {[cmd.name for cmd in synced]}"
-        )
+        synced = await tree.sync()
+        print(f"🌍 Synced {len(synced)} global slash command(s): {[cmd.name for cmd in synced]}")
     except Exception as e:
         print(f"⚠️ Global sync failed: {e}")
 
-
-# === Run the Bot ===
+# === Run Bot ===
 client.run(os.getenv("TOKEN"))
