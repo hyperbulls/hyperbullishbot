@@ -1,7 +1,6 @@
 import os
 import discord
 from discord import app_commands, File
-from threading import Thread
 from datetime import datetime
 from dotenv import load_dotenv
 import random
