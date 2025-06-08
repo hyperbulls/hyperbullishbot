@@ -5,11 +5,13 @@ import yfinance as yf
 from flask import Flask
 from threading import Thread
 from datetime import datetime
+from dotenv import load_dotenv
 import random  # add this at the top of your file
 
 # === Flask Web Server to Keep Replit Alive ===
 app = Flask('')
 
+load_dotenv()
 
 @app.route('/')
 def home():
