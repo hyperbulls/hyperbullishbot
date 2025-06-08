@@ -1,7 +1,6 @@
 import os
 import discord
 from discord import app_commands, File
-from flask import Flask
 from threading import Thread
 from datetime import datetime
 from dotenv import load_dotenv
