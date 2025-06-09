@@ -216,8 +216,12 @@ async def chartbulllevels(interaction: discord.Interaction, division: str = "tot
 @client.event
 async def on_ready():
     await client.change_presence(activity=discord.Game(name="Tesla Valuation"))
-    print(f"✅ Logged in as {client.user}")
-    await tree.sync()
-    print(f"🌍 Synced {len(synced)} global slash command(s): {[cmd.name for cmd in synced]}")
+    print(f"✅ Logged in as {client.user} (ID: {client.user.id})")
+
+    try:
+        synced = await tree.sync()
+        print(f"🌍 Synced {len(synced)} global slash command(s): {[cmd.name for cmd in synced]}")
+    except Exception as e:
+        print(f"⚠️ Failed to sync commands: {e}")
 
 client.run(TOKEN)
