@@ -218,5 +218,6 @@ async def on_ready():
     await client.change_presence(activity=discord.Game(name="Tesla Valuation"))
     print(f"✅ Logged in as {client.user}")
     await tree.sync()
+    print(f"🌍 Synced {len(synced)} global slash command(s): {[cmd.name for cmd in synced]}")
 
 client.run(TOKEN)
