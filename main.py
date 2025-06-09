@@ -1,113 +1,116 @@
-# (continued from your current file)
+import os
+import json
+import math
+import random
+import discord
+from discord import app_commands
+from discord.ext import commands
+from datetime import datetime
+import matplotlib.pyplot as plt
+import yfinance as yf
+from dotenv import load_dotenv
+import io
+import atexit
 
-# === /setgrowth ===
-@tree.command(name="setgrowth", description="Set growth settings per component")
-@app_commands.describe(
-    component="cars, energy, fsd, robotaxi, optimus, dojo",
-    growth="linear, exponential, sigmoid, log",
-    start_year="e.g. 2025", start_quarter="1-4",
-    end_year="e.g. 2032", end_quarter="1-4"
-)
-async def setgrowth(interaction: discord.Interaction, component: str, growth: str, start_year: int, start_quarter: int, end_year: int, end_quarter: int):
-    if component not in supported_components:
-        await interaction.response.send_message("❌ Invalid component")
-        return
-    if growth not in supported_growths:
-        await interaction.response.send_message("❌ Invalid growth type")
-        return
+# === Load .env and constants ===
+load_dotenv()
+TOKEN = os.getenv("TOKEN")
+SETTINGS_FILE = "user_settings.json"
 
-    uid = str(interaction.user.id)
-    user_settings.setdefault(uid, {})
-    user_settings[uid][component] = {
-        "growth": growth,
-        "start": [start_year, start_quarter],
-        "end": [end_year, end_quarter]
-    }
-    save_user_settings()
-    await interaction.response.send_message(f"✅ Set {component} to {growth} growth from Q{start_quarter} {start_year} to Q{end_quarter} {end_year}.")
+# === Global Data ===
+user_settings = {}
+supported_components = ["cars", "energy", "fsd", "robotaxi", "optimus", "dojo"]
+supported_growths = ["linear", "exponential", "sigmoid", "log"]
+supported_bull_levels = ["bear", "normal", "bull", "hyperbull"]
+default_growth_settings = {
+    "cars": {"growth": "log", "start": [2025, 1], "end": [2035, 4]},
+    "energy": {"growth": "sigmoid", "start": [2025, 1], "end": [2035, 4]},
+    "fsd": {"growth": "sigmoid", "start": [2025, 1], "end": [2032, 4]},
+    "optimus": {"growth": "exponential", "start": [2027, 4], "end": [2035, 4]},
+    "robotaxi": {"growth": "linear", "start": [2026, 2], "end": [2035, 4]},
+    "dojo": {"growth": "linear", "start": [2025, 1], "end": [2035, 4]}
+}
 
-# === /viewgrowth ===
-@tree.command(name="viewgrowth", description="View your component growth settings")
-async def viewgrowth(interaction: discord.Interaction):
-    uid = str(interaction.user.id)
-    settings = user_settings.get(uid, {})
-    lines = ["📊 Your Growth Settings:"]
-    for comp in supported_components:
-        cfg = settings.get(comp, default_growth_settings[comp])
-        sy, sq = cfg['start']
-        ey, eq = cfg['end']
-        lines.append(f"• {comp}: {cfg['growth']} from Q{sq} {sy} → Q{eq} {ey}")
-    await interaction.response.send_message("\n".join(lines))
+# === Load/Save Settings ===
+def load_user_settings():
+    global user_settings
+    try:
+        with open(SETTINGS_FILE, "r") as f:
+            user_settings = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        user_settings = {}
 
-# === /chartdivisions ===
-@tree.command(name="chartdivisions", description="Chart valuation per division")
-@app_commands.describe(bullishness="bear, normal, bull, hyperbull")
-async def chartdivisions(interaction: discord.Interaction, bullishness: str = "normal"):
-    if bullishness not in supported_bull_levels:
-        await interaction.response.send_message("❌ Invalid bullishness level.")
-        return
+def save_user_settings():
+    with open(SETTINGS_FILE, "w") as f:
+        json.dump(user_settings, f, indent=2)
 
-    uid = interaction.user.id
-    x = [f"{y}Q{q}" for y, q in generate_timeline()]
-    y_data = {comp: project_component(uid, comp, bullishness) for comp in supported_components}
-    total = [sum(vals) for vals in zip(*y_data.values())]
+atexit.register(save_user_settings)
+load_user_settings()
 
-    fig, ax = plt.subplots(figsize=(12, 6))
-    bottom = [0] * len(x)
-    for comp in supported_components:
-        ax.bar(x, y_data[comp], bottom=bottom, label=comp)
-        bottom = [b + v for b, v in zip(bottom, y_data[comp])]
-    ax.plot(x, total, color="black", linewidth=2, label="Total")
+# === Bot Setup ===
+intents = discord.Intents.default()
+client = commands.Bot(command_prefix="!", intents=intents)
+tree = client.tree
 
-    ax.set_title(f"Tesla Valuation by Division ({bullishness})")
-    ax.set_ylabel("Projected Value ($B)")
-    ax.legend()
-    plt.xticks(rotation=45)
-    plt.tight_layout()
+# === Growth Function ===
+def get_growth_multiplier(progress: float, growth_type: str):
+    progress = min(max(progress, 0.0), 1.0)
+    if growth_type == "linear":
+        return progress
+    if growth_type == "exponential":
+        return progress ** 2
+    if growth_type == "sigmoid":
+        x = (progress * 12) - 6
+        return 1 / (1 + math.exp(-x))
+    if growth_type == "log":
+        return math.log1p(progress * (math.e - 1))
+    return progress
 
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png')
-    buf.seek(0)
-    await interaction.response.send_message(file=discord.File(buf, filename="chart.png"))
-    plt.close()
+# === Time Series ===
+def generate_timeline(start_year=2025, end_year=2035):
+    return [(y, q) for y in range(start_year, end_year+1) for q in range(1, 5)]
 
-# === /chartbulllevels ===
-@tree.command(name="chartbulllevels", description="Chart all bull levels for one division")
-@app_commands.describe(division="cars, energy, fsd, robotaxi, optimus, dojo, total")
-async def chartbulllevels(interaction: discord.Interaction, division: str = "total"):
-    if division != "total" and division not in supported_components:
-        await interaction.response.send_message("❌ Invalid division.")
-        return
+def quarters_between(start, end):
+    return (end[0] - start[0]) * 4 + (end[1] - start[1]) + 1
 
-    uid = interaction.user.id
-    x = [f"{y}Q{q}" for y, q in generate_timeline()]
-    fig, ax = plt.subplots(figsize=(12, 6))
+# === Component Projection ===
+def project_component(user_id, component, bullishness):
+    settings = user_settings.get(str(user_id), {}).get(component, default_growth_settings[component])
 
-    for bull in supported_bull_levels:
-        if division == "total":
-            all_vals = [project_component(uid, comp, bull) for comp in supported_components]
-            y = [sum(vals) for vals in zip(*all_vals)]
+    growth_type = settings['growth']
+    start = settings['start']
+    end = settings['end']
+    total_quarters = 44
+    result = []
+
+    for i, (y, q) in enumerate(generate_timeline()):
+        if (y, q) < tuple(start):
+            result.append(0)
+        elif (y, q) > tuple(end):
+            result.append(1)
         else:
-            y = project_component(uid, division, bull)
-        ax.plot(x, y, label=bull)
+            t_total = quarters_between(start, end)
+            t_now = quarters_between(start, (y, q))
+            progress = t_now / t_total
+            result.append(get_growth_multiplier(progress, growth_type))
 
-    ax.set_title(f"{division.capitalize()} Valuation Across Bullishness Levels")
-    ax.set_ylabel("Projected Value ($B)")
-    ax.legend()
-    plt.xticks(rotation=45)
-    plt.tight_layout()
+    scale = {
+        "bear": 0.5,
+        "normal": 1.0,
+        "bull": 1.5,
+        "hyperbull": 2.5
+    }[bullishness]
+    base_value = {
+        "cars": 100,
+        "energy": 30,
+        "fsd": 20,
+        "robotaxi": 50,
+        "optimus": 60,
+        "dojo": 40
+    }[component]
 
-    buf = io.BytesIO()
-    plt.savefig(buf, format='png')
-    buf.seek(0)
-    await interaction.response.send_message(file=discord.File(buf, filename="bulllevels.png"))
-    plt.close()
+    return [v * base_value * scale for v in result]
 
-# === Startup ===
-@client.event
-async def on_ready():
-    await client.change_presence(activity=discord.Game(name="Tesla Valuation"))
-    print(f"✅ Logged in as {client.user}")
-    await tree.sync()
-
-client.run(TOKEN)
+# === Declare Tree Explicitly for Compatibility ===
+tree = app_commands.CommandTree(client)
+client.tree = tree
