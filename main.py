@@ -149,68 +149,81 @@ async def viewgrowth(interaction: discord.Interaction):
     await interaction.response.send_message("\n".join(lines))
 
 # === /chartdivisions ===
-@tree.command(name="chartdivisions", description="Chart valuation per division")
-@app_commands.describe(bullishness="bear, normal, bull, hyperbull")
+@tree.command(name="chartdivisions", description="Show valuation of components for a bullishness level")
+@app_commands.describe(bullishness="Choose from: bear, normal, bull, hyperbull")
 async def chartdivisions(interaction: discord.Interaction, bullishness: str = "normal"):
+    await interaction.response.defer()
+
     if bullishness not in supported_bull_levels:
-        await interaction.response.send_message("❌ Invalid bullishness level.")
+        await interaction.followup.send("❌ Invalid bullishness level.")
         return
 
-    uid = interaction.user.id
-    x = [f"{y}Q{q}" for y, q in generate_timeline()]
-    y_data = {comp: project_component(uid, comp, bullishness) for comp in supported_components}
-    total = [sum(vals) for vals in zip(*y_data.values())]
+    timeline = generate_timeline()
+    labels = [f"{y} Q{q}" for y, q in timeline]
+    components = supported_components
+    data = [project_component(interaction.user.id, comp, bullishness) for comp in components]
 
-    fig, ax = plt.subplots(figsize=(12, 6))
-    bottom = [0] * len(x)
-    for comp in supported_components:
-        ax.bar(x, y_data[comp], bottom=bottom, label=comp)
-        bottom = [b + v for b, v in zip(bottom, y_data[comp])]
-    ax.plot(x, total, color="black", linewidth=2, label="Total")
+    plt.figure(figsize=(12, 6))
+    bottom = [0] * len(timeline)
+    for values, label in zip(data, components):
+        plt.bar(labels, values, bottom=bottom, label=label)
+        bottom = [b + v for b, v in zip(bottom, values)]
 
-    ax.set_title(f"Tesla Valuation by Division ({bullishness})")
-    ax.set_ylabel("Projected Value ($B)")
-    ax.legend()
-    plt.xticks(rotation=45)
+    plt.title(f"Tesla Component Valuation — {bullishness.capitalize()} Case")
+    plt.xlabel("Quarter")
+    plt.ylabel("Value ($B)")
+    plt.xticks(rotation=45, ha='right', fontsize=8)
+    plt.legend()
     plt.tight_layout()
 
     buf = io.BytesIO()
     plt.savefig(buf, format='png')
     buf.seek(0)
-    await interaction.response.send_message(file=discord.File(buf, filename="chart.png"))
     plt.close()
+
+    await interaction.followup.send(file=discord.File(buf, filename="chartdivisions.png"))
 
 # === /chartbulllevels ===
-@tree.command(name="chartbulllevels", description="Chart all bull levels for one division")
-@app_commands.describe(division="cars, energy, fsd, robotaxi, optimus, dojo, total")
+@tree.command(name="chartbulllevels", description="Show a component's valuation across all bull levels")
+@app_commands.describe(division="Component (e.g., cars, energy, robotaxi, fsd, optimus, dojo)")
 async def chartbulllevels(interaction: discord.Interaction, division: str = "total"):
+    await interaction.response.defer()
+
     if division != "total" and division not in supported_components:
-        await interaction.response.send_message("❌ Invalid division.")
+        await interaction.followup.send("❌ Invalid component.")
         return
 
-    uid = interaction.user.id
-    x = [f"{y}Q{q}" for y, q in generate_timeline()]
-    fig, ax = plt.subplots(figsize=(12, 6))
+    timeline = generate_timeline()
+    labels = [f"{y} Q{q}" for y, q in timeline]
 
-    for bull in supported_bull_levels:
-        if division == "total":
-            all_vals = [project_component(uid, comp, bull) for comp in supported_components]
-            y = [sum(vals) for vals in zip(*all_vals)]
-        else:
-            y = project_component(uid, division, bull)
-        ax.plot(x, y, label=bull)
+    plt.figure(figsize=(12, 6))
 
-    ax.set_title(f"{division.capitalize()} Valuation Across Bullishness Levels")
-    ax.set_ylabel("Projected Value ($B)")
-    ax.legend()
-    plt.xticks(rotation=45)
+    if division == "total":
+        for bull in supported_bull_levels:
+            total = [0] * len(timeline)
+            for comp in supported_components:
+                comp_val = project_component(interaction.user.id, comp, bull)
+                total = [t + c for t, c in zip(total, comp_val)]
+            plt.plot(labels, total, label=bull)
+    else:
+        for bull in supported_bull_levels:
+            values = project_component(interaction.user.id, division, bull)
+            plt.plot(labels, values, label=bull)
+
+    title = "Total Valuation" if division == "total" else f"{division.capitalize()} Valuation"
+    plt.title(f"{title} across Bullishness Levels")
+    plt.xlabel("Quarter")
+    plt.ylabel("Value ($B)")
+    plt.xticks(rotation=45, ha='right', fontsize=8)
+    plt.legend()
     plt.tight_layout()
 
     buf = io.BytesIO()
     plt.savefig(buf, format='png')
     buf.seek(0)
-    await interaction.response.send_message(file=discord.File(buf, filename="bulllevels.png"))
     plt.close()
+
+    await interaction.followup.send(file=discord.File(buf, filename="chartbulllevels.png"))
 
 # === Startup ===
 @client.event
