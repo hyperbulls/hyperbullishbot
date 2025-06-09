@@ -50,8 +50,7 @@ load_user_settings()
 # === Bot Setup ===
 intents = discord.Intents.default()
 client = commands.Bot(command_prefix="!", intents=intents)
-tree = app_commands.CommandTree(client)
-client.tree = tree  # explicitly attach
+tree = client.tree
 
 # === Growth Function ===
 def get_growth_multiplier(progress: float, growth_type: str):
