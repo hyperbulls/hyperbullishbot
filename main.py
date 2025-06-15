@@ -128,8 +128,8 @@ async def query_grok(prompt: str) -> str:
         ]
     }
 
-    timeout = aiohttp.ClientTimeout(total=20)  # Increased to 20 seconds
-    for attempt in range(3):  # Retry up to 3 times
+    timeout = aiohttp.ClientTimeout(total=20)
+    for attempt in range(3):
         try:
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(url, headers=headers, json=data) as response:
@@ -146,8 +146,8 @@ async def query_grok(prompt: str) -> str:
                         return f"Error: API request failed with status {response.status}: {response.reason}\nHeaders: {response.headers}\nBody: {error_body[:1000]}"
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             print(f"[ERROR] API request attempt {attempt + 1} failed: {type(e).__name__}: {str(e)}")
-            if attempt < 2:  # Don't sleep after last attempt
-                await asyncio.sleep(2 ** attempt)  # Exponential backoff: 1s, 2s
+            if attempt < 2:
+                await asyncio.sleep(2 ** attempt)
             continue
         except Exception as e:
             print(f"[ERROR] Unexpected error in API request: {type(e).__name__}: {str(e)}")
@@ -171,33 +171,30 @@ async def on_message(message: discord.Message):
             query = query[len(client.user.name):].strip()
 
         if not query:
-            await message.channel.send("Please ask a question after mentioning me!")
+            try:
+                await message.channel.send("Please ask a question after mentioning me!")
+            except discord.errors.Forbidden:
+                print(f"[ERROR] Missing permissions to send message in channel {message.channel.id}")
             return
 
-        async with message.channel.typing():
-            response = await query_grok(query)
-            print(f"[DEBUG] Sending mention response: {response[:50]}...")
+        response = await query_grok(query)
+        print(f"[DEBUG] Sending mention response: {response[:50]}...")
+        try:
+            await message.channel.send(response)
+        except discord.errors.Forbidden:
+            print(f"[ERROR] Missing permissions to send message in channel {message.channel.id}")
             try:
-                await message.channel.send(response)
-            except discord.errors.HTTPException as e:
-                print(f"[ERROR] Failed to send mention response: {type(e).__name__}: {str(e)}")
-                await message.channel.send("Error: Failed to send response.")
+                await message.author.send(
+                    f"I can't respond in {message.channel.name} due to missing permissions. "
+                    "Please ask a server admin to grant me Send Messages permission, or try another channel."
+                )
+            except discord.errors.Forbidden:
+                print(f"[ERROR] Unable to DM user {message.author.id} about permission issue")
+        except discord.errors.HTTPException as e:
+            print(f"[ERROR] Failed to send mention response: {type(e).__name__}: {str(e)}")
+            await message.channel.send("Error: Failed to send response.")
 
     await client.process_commands(message)
-
-# === Command: Ask Grok ===
-@tree.command(name="askgrok", description="Ask Grok about Tesla valuation or related topics")
-@app_commands.describe(question="Your question or prompt for Grok")
-async def askgrok(interaction: discord.Interaction, question: str):
-    await interaction.response.defer(thinking=True)
-    
-    response = await query_grok(question)
-    print(f"[DEBUG] Sending slash command response: {response[:50]}...")
-    try:
-        await interaction.followup.send(response)
-    except discord.errors.HTTPException as e:
-        print(f"[ERROR] Failed to send slash command response: {type(e).__name__}: {str(e)}")
-        await interaction.followup.send("Error: Failed to send response.")
 
 # === Chart: Divisions at one bull level ===
 @tree.command(name="chartdivisions", description="Valuation per division at selected bullishness level")
