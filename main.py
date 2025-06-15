@@ -12,7 +12,6 @@ from dotenv import load_dotenv
 import io
 import atexit
 import aiohttp
-import asyncio
 
 # === Load .env and constants ===
 load_dotenv()
@@ -77,25 +76,6 @@ def generate_timeline(start_year=2025, end_year=2035):
 def quarters_between(start, end):
     return (end[0] - start[0]) * 4 + (end[1] - start[1]) + 1
 
-def split_message(content: str, max_length: int = DISCORD_MAX_MESSAGE_LENGTH) -> list:
-    """Split a message into chunks of up to max_length characters."""
-    if len(content) <= max_length:
-        return [content]
-    
-    chunks = []
-    while content:
-        if len(content) <= max_length:
-            chunks.append(content)
-            break
-        # Find last space within max_length
-        split_index = content[:max_length].rfind(" ")
-        if split_index == -1:
-            split_index = max_length
-        chunks.append(content[:split_index].strip())
-        content = content[split_index:].strip()
-    
-    return [chunk for chunk in chunks if chunk]
-
 # === Valuation ===
 def project_component(user_id, component, bullishness):
     settings = user_settings.get(str(user_id), {}).get(component, default_growth_settings[component])
@@ -134,7 +114,15 @@ async def query_grok(prompt: str) -> str:
     data = {
         "model": "grok-3-mini",
         "messages": [
-            {"role": "system", "content": "You are Grok, a helpful AI assistant."},
+            {
+                "role": "system",
+                "content": (
+                    "You are Grok, a helpful AI assistant. Keep your responses concise, under 2000 characters. "
+                    "Provide answers related to a Discord bot that projects Tesla's valuation based on components "
+                    "(cars, energy, fsd, robotaxi, optimus, dojo) and bullishness levels (bear, normal, bull, hyperbull), "
+                    "using growth models (linear, exponential, sigmoid, log) for projections from 2025 to 2035."
+                )
+            },
             {"role": "user", "content": prompt}
         ]
     }
@@ -145,7 +133,11 @@ async def query_grok(prompt: str) -> str:
             async with session.post(url, headers=headers, json=data) as response:
                 if response.status == 200:
                     result = await response.json()
-                    return result.get("choices", [{}])[0].get("message", {}).get("content", "No response received from Grok.")
+                    content = result.get("choices", [{}])[0].get("message", {}).get("content", "No response received from Grok.")
+                    print(f"[DEBUG] Grok response length: {len(content)} characters")  # Debug log
+                    if len(content) > DISCORD_MAX_MESSAGE_LENGTH:
+                        content = content[:DISCORD_MAX_MESSAGE_LENGTH - 50] + "... (truncated due to length)"
+                    return content
                 else:
                     error_body = await response.text()
                     return f"Error: API request failed with status {response.status}: {response.reason}\nHeaders: {response.headers}\nBody: {error_body[:1000]}"
@@ -175,24 +167,13 @@ async def on_message(message: discord.Message):
             return
 
         async with message.channel.typing():
-            context = (
-                "You are assisting users with a Discord bot that projects Tesla's valuation based on components "
-                "(cars, energy, fsd, robotaxi, optimus, dojo) and bullishness levels (bear, normal, bull, hyperbull). "
-                "The bot uses growth models (linear, exponential, sigmoid, log) to project valuations from 2025 to 2035. "
-                f"User question: {query}"
-            )
-            
-            response = await query_grok(context)
-            chunks = split_message(response)
-            print(f"[DEBUG] Mention response chunks: {len(chunks)}")  # Debug log
-            for i, chunk in enumerate(chunks):
-                try:
-                    print(f"[DEBUG] Sending chunk {i+1}/{len(chunks)}: {chunk[:50]}...")  # Log first 50 chars
-                    await message.channel.send(chunk)
-                    await asyncio.sleep(0.5)  # Delay to avoid rate limits
-                except discord.errors.HTTPException as e:
-                    print(f"[ERROR] Failed to send chunk {i+1}: {e}")
-                    await message.channel.send("Error: Failed to send part of the response.")
+            response = await query_grok(query)
+            print(f"[DEBUG] Sending mention response: {response[:50]}...")  # Debug log
+            try:
+                await message.channel.send(response)
+            except discord.errors.HTTPException as e:
+                print(f"[ERROR] Failed to send mention response: {e}")
+                await message.channel.send("Error: Failed to send response.")
 
     await client.process_commands(message)
 
@@ -202,6 +183,94 @@ async def on_message(message: discord.Message):
 async def askgrok(interaction: discord.Interaction, question: str):
     await interaction.response.defer(thinking=True)
     
-    context = (
-        "You are assisting users with a Discord bot that projects Tesla's valuation based on components "
-        "(cars, energy, fsd, robotaxi, optimus, dojo) and bullishness levels (bear, normal, bull,
+    response = await query_grok(question)
+    print(f"[DEBUG] Sending slash command response: {response[:50]}...")  # Debug log
+    try:
+        await interaction.followup.send(response)
+    except discord.errors.HTTPException as e:
+        print(f"[ERROR] Failed to send slash command response: {e}")
+        await interaction.followup.send("Error: Failed to send response.")
+
+# === Chart: Divisions at one bull level ===
+@tree.command(name="chartdivisions", description="Valuation per division at selected bullishness level")
+@app_commands.describe(bullishness="Choose a bullishness level")
+async def chartdivisions(interaction: discord.Interaction, bullishness: str = "normal"):
+    if bullishness not in supported_bull_levels:
+        await interaction.response.send_message("Invalid bullishness level. Choose from: bear, normal, bull, hyperbull")
+        return
+    await interaction.response.defer(thinking=True)
+
+    user_id = str(interaction.user.id)
+    timeline = generate_timeline()
+    labels = [f"{y}Q{q}" for (y, q) in timeline]
+    total = [0] * len(timeline)
+    plt.figure()
+
+    for component in supported_components:
+        values = project_component(user_id, component, bullishness)
+        plt.plot(labels, values, label=component)
+        total = [a + b for a, b in zip(total, values)]
+
+    plt.plot(labels, total, label="total", linewidth=2, linestyle="--")
+    plt.xticks(rotation=45, fontsize=6)
+    plt.title(f"Tesla Valuation by Component ({bullishness})")
+    plt.legend()
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png")
+    buf.seek(0)
+    plt.close()
+
+    await interaction.followup.send(file=discord.File(buf, "chartdivisions.png"))
+
+# === Chart: One division across all bull levels ===
+@tree.command(name="chartbulllevels", description="Compare bullishness levels for one division")
+@app_commands.describe(division="cars, energy, fsd, robotaxi, optimus, dojo or total")
+async def chartbulllevels(interaction: discord.Interaction, division: str = "total"):
+    await interaction.response.defer(thinking=True)
+
+    user_id = str(interaction.user.id)
+    timeline = generate_timeline()
+    labels = [f"{y}Q{q}" for (y, q) in timeline]
+
+    plt.figure()
+    if division == "total":
+        for level in supported_bull_levels:
+            total = [0] * len(timeline)
+            for component in supported_components:
+                values = project_component(user_id, component, level)
+                total = [a + b for a, b in zip(total, values)]
+            plt.plot(labels, total, label=level)
+    else:
+        if division not in supported_components:
+            await interaction.followup.send("Invalid division name.")
+            return
+        for level in supported_bull_levels:
+            values = project_component(user_id, division, level)
+            plt.plot(labels, values, label=level)
+
+    plt.xticks(rotation=45, fontsize=6)
+    plt.title(f"{division.capitalize()} Valuation across Bullishness Levels")
+    plt.legend()
+    plt.tight_layout()
+
+    buf = io.BytesIO()
+    plt.savefig(buf, format="png")
+    buf.seek(0)
+    plt.close()
+
+    await interaction.followup.send(file=discord.File(buf, "chartbulllevels.png"))
+
+# === On Ready ===
+@client.event
+async def on_ready():
+    print(f"✅ Logged in as {client.user} (ID: {client.user.id})")
+    try:
+        synced = await tree.sync()
+        print(f"🌍 Synced {len(synced)} global slash command(s): {[cmd.name for cmd in synced]}")
+    except Exception as e:
+        print(f"⚠️ Global sync failed: {type(e).__name__}: {str(e)}")
+
+# === Run ===
+client.run(TOKEN)
