@@ -18,6 +18,7 @@ load_dotenv()
 TOKEN = os.getenv("TOKEN")
 XAI_API_KEY = os.getenv("XAI_API_KEY")
 SETTINGS_FILE = "user_settings.json"
+DISCORD_MAX_MESSAGE_LENGTH = 2000  # Discord's max message length
 
 # === Global Data ===
 user_settings = {}
@@ -51,7 +52,7 @@ load_user_settings()
 
 # === Bot Setup ===
 intents = discord.Intents.default()
-intents.message_content = True  # Enable message content intent for on_message
+intents.message_content = True
 client = commands.Bot(command_prefix="!", intents=intents)
 tree = client.tree
 
@@ -74,6 +75,35 @@ def generate_timeline(start_year=2025, end_year=2035):
 
 def quarters_between(start, end):
     return (end[0] - start[0]) * 4 + (end[1] - start[1]) + 1
+
+def split_message(content: str, max_length: int = DISCORD_MAX_MESSAGE_LENGTH) -> list:
+    """Split a message into chunks of up to max_length characters, preserving sentences where possible."""
+    if len(content) <= max_length:
+        return [content]
+    
+    chunks = []
+    current_chunk = ""
+    
+    for sentence in content.split(". "):
+        sentence = sentence.strip() + (". " if sentence else "")
+        if len(current_chunk) + len(sentence) <= max_length:
+            current_chunk += sentence
+        else:
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+            current_chunk = sentence
+    
+    if current_chunk:
+        chunks.append(current_chunk.strip())
+    
+    # Handle edge case where a single sentence exceeds max_length
+    for i, chunk in enumerate(chunks[:]):
+        if len(chunk) > max_length:
+            chunks.pop(i)
+            for j in range(0, len(chunk), max_length):
+                chunks.insert(i + j // max_length, chunk[j:j + max_length])
+    
+    return [chunk for chunk in chunks if chunk]
 
 # === Valuation ===
 def project_component(user_id, component, bullishness):
@@ -136,14 +166,12 @@ async def query_grok(prompt: str) -> str:
 # === On Message: Handle Bot Mentions ===
 @client.event
 async def on_message(message: discord.Message):
-    if message.author.bot:  # Ignore messages from bots
+    if message.author.bot:
         return
 
-    # Check if the bot is mentioned or message starts with bot's name
     bot_mentioned = client.user in message.mentions or message.content.lower().startswith(client.user.name.lower())
     
     if bot_mentioned:
-        # Extract query by removing bot's name or mention
         query = message.content
         if client.user in message.mentions:
             query = query.replace(f"<@{client.user.id}>", "").strip()
@@ -151,11 +179,10 @@ async def on_message(message: discord.Message):
         elif message.content.lower().startswith(client.user.name.lower()):
             query = query[len(client.user.name):].strip()
 
-        if not query:  # Ignore empty queries
+        if not query:
             await message.channel.send("Please ask a question after mentioning me!")
             return
 
-        # Show typing indicator while processing
         async with message.channel.typing():
             context = (
                 "You are assisting users with a Discord bot that projects Tesla's valuation based on components "
@@ -165,9 +192,10 @@ async def on_message(message: discord.Message):
             )
             
             response = await query_grok(context)
-            await message.channel.send(response[:2000])  # Respect Discord's 2000-character limit
+            # Split response into chunks
+            for chunk in split_message(response):
+                await message.channel.send(chunk)
 
-    # Process commands (e.g., ! or / commands)
     await client.process_commands(message)
 
 # === Command: Ask Grok ===
@@ -184,7 +212,11 @@ async def askgrok(interaction: discord.Interaction, question: str):
     )
     
     response = await query_grok(context)
-    await interaction.followup.send(response[:2000])
+    # Split response into chunks
+    chunks = split_message(response)
+    await interaction.followup.send(chunks[0])  # Send first chunk
+    for chunk in chunks[1:]:  # Send remaining chunks
+        await interaction.channel.send(chunk)
 
 # === Chart: Divisions at one bull level ===
 @tree.command(name="chartdivisions", description="Valuation per division at selected bullishness level")
