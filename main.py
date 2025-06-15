@@ -117,7 +117,9 @@ async def query_grok(prompt: str) -> str:
         ]
     }
 
-    async with aiohttp.ClientSession() as session:
+    # Set a timeout for the API request (e.g., 10 seconds)
+    timeout = aiohttp.ClientTimeout(total=10)
+    async with aiohttp.ClientSession(timeout=timeout) as session:
         try:
             async with session.post(url, headers=headers, json=data) as response:
                 if response.status == 200:
@@ -125,6 +127,8 @@ async def query_grok(prompt: str) -> str:
                     return result.get("choices", [{}])[0].get("message", {}).get("content", "No response received from Grok.")
                 else:
                     return f"Error: API request failed with status {response.status}: {response.reason}"
+        except aiohttp.ClientTimeout:
+            return "Error: xAI API request timed out."
         except Exception as e:
             return f"Error: Failed to connect to Grok API - {str(e)}"
 
@@ -132,17 +136,18 @@ async def query_grok(prompt: str) -> str:
 @tree.command(name="askgrok", description="Ask Grok about Tesla valuation or related topics")
 @app_commands.describe(question="Your question or prompt for Grok")
 async def askgrok(interaction: discord.Interaction, question: str):
-    await interaction.response.defer()
+    # Defer immediately to avoid interaction timeout
+    await interaction.response.defer(thinking=True)  # Show "Bot is thinking..." in Discord
     
     context = (
         "You are assisting users with a Discord bot that projects Tesla's valuation based on components "
         "(cars, energy, fsd, robotaxi, optimus, dojo) and bullishness levels (bear, normal, bull, hyperbull). "
         "The bot uses growth models (linear, exponential, sigmoid, log) to project valuations from 2025 to 2035. "
-        f"User query: {question}"
+        f"User question: {question}"
     )
     
     response = await query_grok(context)
-    await interaction.followup.send(response[:2000])
+    await interaction.followup.send(response[:2000])  # Respect Discord's 2000-character limit
 
 # === Chart: Divisions at one bull level ===
 @tree.command(name="chartdivisions", description="Valuation per division at selected bullishness level")
@@ -151,7 +156,7 @@ async def chartdivisions(interaction: discord.Interaction, bullishness: str = "n
     if bullishness not in supported_bull_levels:
         await interaction.response.send_message("Invalid bullishness level. Choose from: bear, normal, bull, hyperbull")
         return
-    await interaction.response.defer()
+    await interaction.response.defer(thinking=True)  # Added thinking=True for consistency
 
     user_id = str(interaction.user.id)
     timeline = generate_timeline()
@@ -181,7 +186,7 @@ async def chartdivisions(interaction: discord.Interaction, bullishness: str = "n
 @tree.command(name="chartbulllevels", description="Compare bullishness levels for one division")
 @app_commands.describe(division="cars, energy, fsd, robotaxi, optimus, dojo or total")
 async def chartbulllevels(interaction: discord.Interaction, division: str = "total"):
-    await interaction.response.defer()
+    await interaction.response.defer(thinking=True)  # Added thinking=True for consistency
 
     user_id = str(interaction.user.id)
     timeline = generate_timeline()
