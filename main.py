@@ -128,19 +128,33 @@ async def query_grok(prompt: str) -> str:
 # === New Command: Ask Grok ===
 @tree.command(name="askgrok", description="Ask Grok about Tesla valuation or related topics")
 @app_commands.describe(query="Your question or prompt for Grok")
-async def askgrok(interaction: discord.Interaction, query: str):
-    await interaction.response.defer()
+async def query_grok(prompt: str) -> str:
+    if not XAI_API_KEY:
+        return "Error: xAI API key is not configured. Please contact the bot administrator."
     
-    # Optionally add context to the query
-    context = (
-        "You are assisting users with a Discord bot that projects Tesla's valuation based on components "
-        "(cars, energy, fsd, robotaxi, optimus, dojo) and bullishness levels (bear, normal, bull, hyperbull). "
-        "The bot uses growth models (linear, exponential, sigmoid, log) to project valuations from 2025 to 2035. "
-        f"User query: {query}"
-    )
-    
-    response = await query_grok(context)
-    await interaction.followup.send(response[:2000])  # Discord message length limit
+    url = "https://api.x.ai/v1/chat/completions"  # Updated endpoint
+    headers = {
+        "Authorization": f"Bearer {XAI_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": "grok-3",  # Specify the model
+        "messages": [
+            {"role": "system", "content": "You are Grok, a helpful AI assistant."},
+            {"role": "user", "content": prompt}
+        ]
+    }
+
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.post(url, headers=headers, json=data) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    return result.get("choices", [{}])[0].get("message", {}).get("content", "No response received from Grok.")
+                else:
+                    return f"Error: API request failed with status {response.status}: {response.reason}"
+        except Exception as e:
+            return f"Error: Failed to connect to Grok API - {str(e)}"
 
 # === Chart: Divisions at one bull level ===
 @tree.command(name="chartdivisions", description="Valuation per division at selected bullishness level")
