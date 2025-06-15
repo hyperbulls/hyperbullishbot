@@ -177,12 +177,13 @@ async def on_message(message: discord.Message):
                 print(f"[ERROR] Missing permissions to send message in channel {message.channel.id}")
             return
 
-        response = await query_grok(query)
-        print(f"[DEBUG] Sending mention response: {response[:50]}...")
         try:
-            await message.channel.send(response)
+            async with message.channel.typing():
+                response = await query_grok(query)
+                print(f"[DEBUG] Sending mention response: {response[:50]}...")
+                await message.channel.send(response)
         except discord.errors.Forbidden:
-            print(f"[ERROR] Missing permissions to send message in channel {message.channel.id}")
+            print(f"[ERROR] Missing permissions in channel {message.channel.id}")
             try:
                 await message.author.send(
                     f"I can't respond in {message.channel.name} due to missing permissions. "
@@ -192,7 +193,10 @@ async def on_message(message: discord.Message):
                 print(f"[ERROR] Unable to DM user {message.author.id} about permission issue")
         except discord.errors.HTTPException as e:
             print(f"[ERROR] Failed to send mention response: {type(e).__name__}: {str(e)}")
-            await message.channel.send("Error: Failed to send response.")
+            try:
+                await message.channel.send("Error: Failed to send response.")
+            except discord.errors.Forbidden:
+                print(f"[ERROR] Missing permissions to send error message in channel {message.channel.id}")
 
     await client.process_commands(message)
 
