@@ -110,14 +110,13 @@ async def query_grok(prompt: str) -> str:
         "Content-Type": "application/json"
     }
     data = {
-        "model": "grok-3",
+        "model": "grok-3-mini",  # Updated to grok-3-mini
         "messages": [
             {"role": "system", "content": "You are Grok, a helpful AI assistant."},
             {"role": "user", "content": prompt}
         ]
     }
 
-    # Set a timeout for the API request (e.g., 10 seconds)
     timeout = aiohttp.ClientTimeout(total=10)
     async with aiohttp.ClientSession(timeout=timeout) as session:
         try:
@@ -126,7 +125,9 @@ async def query_grok(prompt: str) -> str:
                     result = await response.json()
                     return result.get("choices", [{}])[0].get("message", {}).get("content", "No response received from Grok.")
                 else:
-                    return f"Error: API request failed with status {response.status}: {response.reason}"
+                    # Include response body for debugging
+                    error_body = await response.text()
+                    return f"Error: API request failed with status {response.status}: {response.reason}\nHeaders: {response.headers}\nBody: {error_body[:1000]}"  # Limit body to avoid overflow
         except aiohttp.ClientTimeout:
             return "Error: xAI API request timed out."
         except Exception as e:
@@ -136,8 +137,7 @@ async def query_grok(prompt: str) -> str:
 @tree.command(name="askgrok", description="Ask Grok about Tesla valuation or related topics")
 @app_commands.describe(question="Your question or prompt for Grok")
 async def askgrok(interaction: discord.Interaction, question: str):
-    # Defer immediately to avoid interaction timeout
-    await interaction.response.defer(thinking=True)  # Show "Bot is thinking..." in Discord
+    await interaction.response.defer(thinking=True)
     
     context = (
         "You are assisting users with a Discord bot that projects Tesla's valuation based on components "
@@ -147,7 +147,7 @@ async def askgrok(interaction: discord.Interaction, question: str):
     )
     
     response = await query_grok(context)
-    await interaction.followup.send(response[:2000])  # Respect Discord's 2000-character limit
+    await interaction.followup.send(response[:2000])
 
 # === Chart: Divisions at one bull level ===
 @tree.command(name="chartdivisions", description="Valuation per division at selected bullishness level")
@@ -156,7 +156,7 @@ async def chartdivisions(interaction: discord.Interaction, bullishness: str = "n
     if bullishness not in supported_bull_levels:
         await interaction.response.send_message("Invalid bullishness level. Choose from: bear, normal, bull, hyperbull")
         return
-    await interaction.response.defer(thinking=True)  # Added thinking=True for consistency
+    await interaction.response.defer(thinking=True)
 
     user_id = str(interaction.user.id)
     timeline = generate_timeline()
@@ -186,7 +186,7 @@ async def chartdivisions(interaction: discord.Interaction, bullishness: str = "n
 @tree.command(name="chartbulllevels", description="Compare bullishness levels for one division")
 @app_commands.describe(division="cars, energy, fsd, robotaxi, optimus, dojo or total")
 async def chartbulllevels(interaction: discord.Interaction, division: str = "total"):
-    await interaction.response.defer(thinking=True)  # Added thinking=True for consistency
+    await interaction.response.defer(thinking=True)
 
     user_id = str(interaction.user.id)
     timeline = generate_timeline()
