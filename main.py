@@ -19,6 +19,7 @@ load_dotenv()
 TOKEN = os.getenv("TOKEN")
 XAI_API_KEY = os.getenv("XAI_API_KEY")
 SETTINGS_FILE = "user_settings.json"
+GROK_CONTENT_FILE = "grokContent"
 DISCORD_MAX_MESSAGE_LENGTH = 2000
 
 # === Global Data ===
@@ -107,6 +108,18 @@ async def query_grok(prompt: str) -> str:
     if not XAI_API_KEY:
         return "Error: xAI API key is not configured. Please contact the bot administrator."
     
+    # Read system prompt from grokContent file
+    try:
+        with open(GROK_CONTENT_FILE, "r") as f:
+            system_prompt = f.read().strip()
+        print(f"[DEBUG] Loaded system prompt from {GROK_CONTENT_FILE}, length: {len(system_prompt)} characters")
+    except FileNotFoundError:
+        print(f"[ERROR] {GROK_CONTENT_FILE} not found")
+        return f"Error: {GROK_CONTENT_FILE} not found. Please create it with the system prompt."
+    except IOError as e:
+        print(f"[ERROR] Failed to read {GROK_CONTENT_FILE}: {str(e)}")
+        return f"Error: Failed to read {GROK_CONTENT_FILE} - {str(e)}"
+
     url = "https://api.x.ai/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {XAI_API_KEY}",
@@ -115,15 +128,7 @@ async def query_grok(prompt: str) -> str:
     data = {
         "model": "grok-3-mini",
         "messages": [
-            {
-                "role": "system",
-                "content": (
-                    "You are Grok, a helpful AI assistant. Keep your responses concise, under 2000 characters. "
-                    "Provide answers related to a Discord bot that projects Tesla's valuation based on components "
-                    "(cars, energy, fsd, robotaxi, optimus, dojo) and bullishness levels (bear, normal, bull, hyperbull), "
-                    "using growth models (linear, exponential, sigmoid, log) for projections from 2025 to 2035."
-                )
-            },
+            {"role": "system", "content": system_prompt},
             {"role": "user", "content": prompt}
         ]
     }
