@@ -51,6 +51,7 @@ load_user_settings()
 
 # === Bot Setup ===
 intents = discord.Intents.default()
+intents.message_content = True  # Enable message content intent for on_message
 client = commands.Bot(command_prefix="!", intents=intents)
 tree = client.tree
 
@@ -110,7 +111,7 @@ async def query_grok(prompt: str) -> str:
         "Content-Type": "application/json"
     }
     data = {
-        "model": "grok-3-mini",  # Updated to grok-3-mini
+        "model": "grok-3-mini",
         "messages": [
             {"role": "system", "content": "You are Grok, a helpful AI assistant."},
             {"role": "user", "content": prompt}
@@ -125,13 +126,49 @@ async def query_grok(prompt: str) -> str:
                     result = await response.json()
                     return result.get("choices", [{}])[0].get("message", {}).get("content", "No response received from Grok.")
                 else:
-                    # Include response body for debugging
                     error_body = await response.text()
-                    return f"Error: API request failed with status {response.status}: {response.reason}\nHeaders: {response.headers}\nBody: {error_body[:1000]}"  # Limit body to avoid overflow
+                    return f"Error: API request failed with status {response.status}: {response.reason}\nHeaders: {response.headers}\nBody: {error_body[:1000]}"
         except aiohttp.ClientTimeout:
             return "Error: xAI API request timed out."
         except Exception as e:
             return f"Error: Failed to connect to Grok API - {str(e)}"
+
+# === On Message: Handle Bot Mentions ===
+@client.event
+async def on_message(message: discord.Message):
+    if message.author.bot:  # Ignore messages from bots
+        return
+
+    # Check if the bot is mentioned or message starts with bot's name
+    bot_mentioned = client.user in message.mentions or message.content.lower().startswith(client.user.name.lower())
+    
+    if bot_mentioned:
+        # Extract query by removing bot's name or mention
+        query = message.content
+        if client.user in message.mentions:
+            query = query.replace(f"<@{client.user.id}>", "").strip()
+            query = query.replace(f"<@!{client.user.id}>", "").strip()
+        elif message.content.lower().startswith(client.user.name.lower()):
+            query = query[len(client.user.name):].strip()
+
+        if not query:  # Ignore empty queries
+            await message.channel.send("Please ask a question after mentioning me!")
+            return
+
+        # Show typing indicator while processing
+        async with message.channel.typing():
+            context = (
+                "You are assisting users with a Discord bot that projects Tesla's valuation based on components "
+                "(cars, energy, fsd, robotaxi, optimus, dojo) and bullishness levels (bear, normal, bull, hyperbull). "
+                "The bot uses growth models (linear, exponential, sigmoid, log) to project valuations from 2025 to 2035. "
+                f"User question: {query}"
+            )
+            
+            response = await query_grok(context)
+            await message.channel.send(response[:2000])  # Respect Discord's 2000-character limit
+
+    # Process commands (e.g., ! or / commands)
+    await client.process_commands(message)
 
 # === Command: Ask Grok ===
 @tree.command(name="askgrok", description="Ask Grok about Tesla valuation or related topics")
