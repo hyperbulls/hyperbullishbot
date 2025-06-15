@@ -12,6 +12,7 @@ from dotenv import load_dotenv
 import io
 import atexit
 import aiohttp
+import asyncio
 
 # === Load .env and constants ===
 load_dotenv()
@@ -127,24 +128,31 @@ async def query_grok(prompt: str) -> str:
         ]
     }
 
-    timeout = aiohttp.ClientTimeout(total=10)
-    async with aiohttp.ClientSession(timeout=timeout) as session:
+    timeout = aiohttp.ClientTimeout(total=20)  # Increased to 20 seconds
+    for attempt in range(3):  # Retry up to 3 times
         try:
-            async with session.post(url, headers=headers, json=data) as response:
-                if response.status == 200:
-                    result = await response.json()
-                    content = result.get("choices", [{}])[0].get("message", {}).get("content", "No response received from Grok.")
-                    print(f"[DEBUG] Grok response length: {len(content)} characters")  # Debug log
-                    if len(content) > DISCORD_MAX_MESSAGE_LENGTH:
-                        content = content[:DISCORD_MAX_MESSAGE_LENGTH - 50] + "... (truncated due to length)"
-                    return content
-                else:
-                    error_body = await response.text()
-                    return f"Error: API request failed with status {response.status}: {response.reason}\nHeaders: {response.headers}\nBody: {error_body[:1000]}"
-        except aiohttp.ClientTimeout:
-            return "Error: xAI API request timed out."
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(url, headers=headers, json=data) as response:
+                    print(f"[DEBUG] API request attempt {attempt + 1}, status: {response.status}")
+                    if response.status == 200:
+                        result = await response.json()
+                        content = result.get("choices", [{}])[0].get("message", {}).get("content", "No response received from Grok.")
+                        print(f"[DEBUG] Grok response length: {len(content)} characters")
+                        if len(content) > DISCORD_MAX_MESSAGE_LENGTH:
+                            content = content[:DISCORD_MAX_MESSAGE_LENGTH - 50] + "... (truncated due to length)"
+                        return content
+                    else:
+                        error_body = await response.text()
+                        return f"Error: API request failed with status {response.status}: {response.reason}\nHeaders: {response.headers}\nBody: {error_body[:1000]}"
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            print(f"[ERROR] API request attempt {attempt + 1} failed: {type(e).__name__}: {str(e)}")
+            if attempt < 2:  # Don't sleep after last attempt
+                await asyncio.sleep(2 ** attempt)  # Exponential backoff: 1s, 2s
+            continue
         except Exception as e:
+            print(f"[ERROR] Unexpected error in API request: {type(e).__name__}: {str(e)}")
             return f"Error: Failed to connect to Grok API - {str(e)}"
+    return "Error: Failed to connect to Grok API after 3 attempts."
 
 # === On Message: Handle Bot Mentions ===
 @client.event
@@ -168,11 +176,11 @@ async def on_message(message: discord.Message):
 
         async with message.channel.typing():
             response = await query_grok(query)
-            print(f"[DEBUG] Sending mention response: {response[:50]}...")  # Debug log
+            print(f"[DEBUG] Sending mention response: {response[:50]}...")
             try:
                 await message.channel.send(response)
             except discord.errors.HTTPException as e:
-                print(f"[ERROR] Failed to send mention response: {e}")
+                print(f"[ERROR] Failed to send mention response: {type(e).__name__}: {str(e)}")
                 await message.channel.send("Error: Failed to send response.")
 
     await client.process_commands(message)
@@ -184,11 +192,11 @@ async def askgrok(interaction: discord.Interaction, question: str):
     await interaction.response.defer(thinking=True)
     
     response = await query_grok(question)
-    print(f"[DEBUG] Sending slash command response: {response[:50]}...")  # Debug log
+    print(f"[DEBUG] Sending slash command response: {response[:50]}...")
     try:
         await interaction.followup.send(response)
     except discord.errors.HTTPException as e:
-        print(f"[ERROR] Failed to send slash command response: {e}")
+        print(f"[ERROR] Failed to send slash command response: {type(e).__name__}: {str(e)}")
         await interaction.followup.send("Error: Failed to send response.")
 
 # === Chart: Divisions at one bull level ===
