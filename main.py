@@ -11,12 +11,12 @@ import yfinance as yf
 from dotenv import load_dotenv
 import io
 import atexit
-import aiohttp  # Added for Grok API requests
+import aiohttp
 
 # === Load .env and constants ===
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
-XAI_API_KEY = os.getenv("XAI_API_KEY")  # Added for Grok API
+XAI_API_KEY = os.getenv("XAI_API_KEY")
 SETTINGS_FILE = "user_settings.json"
 
 # === Global Data ===
@@ -104,41 +104,13 @@ async def query_grok(prompt: str) -> str:
     if not XAI_API_KEY:
         return "Error: xAI API key is not configured. Please contact the bot administrator."
     
-    url = "https://api.x.ai/v1/grok"  # Replace with actual Grok API endpoint
+    url = "https://api.x.ai/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {XAI_API_KEY}",
         "Content-Type": "application/json"
     }
     data = {
-        "prompt": prompt,
-        "model": "grok-3"  # Specify the model, adjust if needed
-    }
-
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.post(url, headers=headers, json=data) as response:
-                if response.status == 200:
-                    result = await response.json()
-                    return result.get("response", "No response received from Grok.")
-                else:
-                    return f"Error: API request failed with status {response.status}"
-        except Exception as e:
-            return f"Error: Failed to connect to Grok API - {str(e)}"
-
-# === New Command: Ask Grok ===
-@tree.command(name="askgrok", description="Ask Grok about Tesla valuation or related topics")
-@app_commands.describe(query="Your question or prompt for Grok")
-async def query_grok(prompt: str) -> str:
-    if not XAI_API_KEY:
-        return "Error: xAI API key is not configured. Please contact the bot administrator."
-    
-    url = "https://api.x.ai/v1/chat/completions"  # Updated endpoint
-    headers = {
-        "Authorization": f"Bearer {XAI_API_KEY}",
-        "Content-Type": "application/json"
-    }
-    data = {
-        "model": "grok-3",  # Specify the model
+        "model": "grok-3",
         "messages": [
             {"role": "system", "content": "You are Grok, a helpful AI assistant."},
             {"role": "user", "content": prompt}
@@ -155,6 +127,22 @@ async def query_grok(prompt: str) -> str:
                     return f"Error: API request failed with status {response.status}: {response.reason}"
         except Exception as e:
             return f"Error: Failed to connect to Grok API - {str(e)}"
+
+# === Command: Ask Grok ===
+@tree.command(name="askgrok", description="Ask Grok about Tesla valuation or related topics")
+@app_commands.describe(question="Your question or prompt for Grok")
+async def askgrok(interaction: discord.Interaction, question: str):
+    await interaction.response.defer()
+    
+    context = (
+        "You are assisting users with a Discord bot that projects Tesla's valuation based on components "
+        "(cars, energy, fsd, robotaxi, optimus, dojo) and bullishness levels (bear, normal, bull, hyperbull). "
+        "The bot uses growth models (linear, exponential, sigmoid, log) to project valuations from 2025 to 2035. "
+        f"User query: {question}"
+    )
+    
+    response = await query_grok(context)
+    await interaction.followup.send(response[:2000])
 
 # === Chart: Divisions at one bull level ===
 @tree.command(name="chartdivisions", description="Valuation per division at selected bullishness level")
@@ -235,7 +223,7 @@ async def on_ready():
         synced = await tree.sync()
         print(f"🌍 Synced {len(synced)} global slash command(s): {[cmd.name for cmd in synced]}")
     except Exception as e:
-        print(f"⚠️ Global sync failed: {e}")
+        print(f"⚠️ Global sync failed: {type(e).__name__}: {str(e)}")
 
 # === Run ===
 client.run(TOKEN)
