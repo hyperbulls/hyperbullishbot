@@ -11,10 +11,12 @@ import yfinance as yf
 from dotenv import load_dotenv
 import io
 import atexit
+import aiohttp  # Added for Grok API requests
 
 # === Load .env and constants ===
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
+XAI_API_KEY = os.getenv("XAI_API_KEY")  # Added for Grok API
 SETTINGS_FILE = "user_settings.json"
 
 # === Global Data ===
@@ -50,7 +52,7 @@ load_user_settings()
 # === Bot Setup ===
 intents = discord.Intents.default()
 client = commands.Bot(command_prefix="!", intents=intents)
-tree = client.tree  # already initialized by discord.py
+tree = client.tree
 
 # === Utility Functions ===
 def get_growth_multiplier(progress: float, growth_type: str):
@@ -97,10 +99,56 @@ def project_component(user_id, component, bullishness):
 
     return [v * base * scale for v in result]
 
+# === Grok API Integration ===
+async def query_grok(prompt: str) -> str:
+    if not XAI_API_KEY:
+        return "Error: xAI API key is not configured. Please contact the bot administrator."
+    
+    url = "https://api.x.ai/v1/grok"  # Replace with actual Grok API endpoint
+    headers = {
+        "Authorization": f"Bearer {XAI_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "prompt": prompt,
+        "model": "grok-3"  # Specify the model, adjust if needed
+    }
+
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.post(url, headers=headers, json=data) as response:
+                if response.status == 200:
+                    result = await response.json()
+                    return result.get("response", "No response received from Grok.")
+                else:
+                    return f"Error: API request failed with status {response.status}"
+        except Exception as e:
+            return f"Error: Failed to connect to Grok API - {str(e)}"
+
+# === New Command: Ask Grok ===
+@tree.command(name="askgrok", description="Ask Grok about Tesla valuation or related topics")
+@app_commands.describe(query="Your question or prompt for Grok")
+async def askgrok(interaction: discord.Interaction, query: str):
+    await interaction.response.defer()
+    
+    # Optionally add context to the query
+    context = (
+        "You are assisting users with a Discord bot that projects Tesla's valuation based on components "
+        "(cars, energy, fsd, robotaxi, optimus, dojo) and bullishness levels (bear, normal, bull, hyperbull). "
+        "The bot uses growth models (linear, exponential, sigmoid, log) to project valuations from 2025 to 2035. "
+        f"User query: {query}"
+    )
+    
+    response = await query_grok(context)
+    await interaction.followup.send(response[:2000])  # Discord message length limit
+
 # === Chart: Divisions at one bull level ===
 @tree.command(name="chartdivisions", description="Valuation per division at selected bullishness level")
 @app_commands.describe(bullishness="Choose a bullishness level")
 async def chartdivisions(interaction: discord.Interaction, bullishness: str = "normal"):
+    if bullishness not in supported_bull_levels:
+        await interaction.response.send_message("Invalid bullishness level. Choose from: bear, normal, bull, hyperbull")
+        return
     await interaction.response.defer()
 
     user_id = str(interaction.user.id)
