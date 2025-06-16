@@ -170,11 +170,11 @@ async def query_grok(prompt: str) -> str:
     if not XAI_API_KEY:
         return "Error: xAI API key is not configured. Please contact the bot administrator."
     
-    # Read system prompt from grokContent file
+    # Read static system prompt from grokContent file
     try:
         with open(GROK_CONTENT_FILE, "r") as f:
-            system_prompt = f.read().strip()
-        print(f"[DEBUG] Loaded system prompt from {GROK_CONTENT_FILE}, length: {len(system_prompt)} characters")
+            static_system_prompt = f.read().strip()
+        print(f"[DEBUG] Loaded system prompt from {GROK_CONTENT_FILE}, length: {len(static_system_prompt)} characters")
     except FileNotFoundError:
         print(f"[ERROR] {GROK_CONTENT_FILE} not found")
         return f"Error: {GROK_CONTENT_FILE} not found. Please create it with the system prompt."
@@ -182,9 +182,15 @@ async def query_grok(prompt: str) -> str:
         print(f"[ERROR] Failed to read {GROK_CONTENT_FILE}: {str(e)}")
         return f"Error: Failed to read {GROK_CONTENT_FILE} - {str(e)}"
 
-    # Fetch market, earnings, news, and timestamp data, append to user prompt
+    # Fetch market, earnings, news, and timestamp data
     market_and_news_data = await get_market_and_news_data()
-    enhanced_prompt = f"{prompt}\n\n{market_and_news_data}"
+    
+    # Construct enhanced system prompt
+    enhanced_system_prompt = (
+        f"{static_system_prompt}\n\n"
+        f"Use the following TSLA, earnings, market, news, and timestamp data in your analysis:\n"
+        f"{market_and_news_data}"
+    )
     
     url = "https://api.x.ai/v1/chat/completions"
     headers = {
@@ -194,8 +200,8 @@ async def query_grok(prompt: str) -> str:
     data = {
         "model": "grok-3-mini",
         "messages": [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": enhanced_prompt}
+            {"role": "system", "content": enhanced_system_prompt},
+            {"role": "user", "content": prompt}
         ]
     }
 
