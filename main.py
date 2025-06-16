@@ -21,7 +21,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
 
-# === Market and News Data Fetching ===
+# === Market, News, and Earnings Data Fetching ===
 def calculate_rsi(data, periods=14):
     delta = data.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=periods).mean()
@@ -75,6 +75,25 @@ async def get_market_and_news_data():
                     f"Recent Price Development (last 5 days): {price_dev}"
                 )
         
+        # Fetch TSLA earnings data
+        earnings = tsla.quarterly_financials
+        if earnings.empty:
+            earnings_data = "Error: Could not retrieve TSLA earnings data."
+        else:
+            latest_quarter = earnings.columns[0]  # Most recent quarter
+            revenue = earnings.loc["Total Revenue", latest_quarter] / 1e9 if "Total Revenue" in earnings.index else "N/A"
+            net_income = earnings.loc["Net Income", latest_quarter] / 1e6 if "Net Income" in earnings.index else "N/A"
+            eps = tsla_info.get("trailingEps", "N/A")  # Fallback to trailing EPS
+            if revenue != "N/A":
+                revenue = f"${revenue:.2f}B"
+            if net_income != "N/A":
+                net_income = f"${net_income:.2f}M"
+            if eps != "N/A":
+                eps = f"${eps:.2f}"
+            earnings_data = (
+                f"Q1 2025 Earnings: Revenue: {revenue}, EPS: {eps}, Net Income: {net_income}"
+            )
+        
         # Fetch VIX and SPY data
         vix = yf.Ticker("^VIX")
         spy = yf.Ticker("SPY")
@@ -127,10 +146,10 @@ async def get_market_and_news_data():
                     else:
                         news_data = f"Error: Failed to fetch news (status {response.status})."
         
-        return f"{tsla_data}\n\n{market_mood}\n\n{news_data}"
+        return f"{tsla_data}\n\n{earnings_data}\n\n{market_mood}\n\n{news_data}"
     except Exception as e:
-        print(f"[ERROR] Failed to fetch market or news data: {type(e).__name__}: {str(e)}")
-        return "Error: Failed to fetch TSLA, market, or news data."
+        print(f"[ERROR] Failed to fetch market, earnings, or news data: {type(e).__name__}: {str(e)}")
+        return "Error: Failed to fetch TSLA, earnings, market, or news data."
 
 # === Grok API Integration ===
 async def query_grok(prompt: str) -> str:
@@ -149,7 +168,7 @@ async def query_grok(prompt: str) -> str:
         print(f"[ERROR] Failed to read {GROK_CONTENT_FILE}: {str(e)}")
         return f"Error: Failed to read {GROK_CONTENT_FILE} - {str(e)}"
 
-    # Fetch market and news data, append to user prompt
+    # Fetch market, earnings, and news data, append to user prompt
     market_and_news_data = await get_market_and_news_data()
     enhanced_prompt = f"{prompt}\n\n{market_and_news_data}"
     
