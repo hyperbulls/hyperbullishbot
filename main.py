@@ -5,11 +5,14 @@ import aiohttp
 import asyncio
 import yfinance as yf
 import pandas as pd
+import requests
+from datetime import datetime, timedelta
 
 # === Load .env and constants ===
 load_dotenv()
 TOKEN = os.getenv("TOKEN")
 XAI_API_KEY = os.getenv("XAI_API_KEY")
+NEWS_API_KEY = os.getenv("NEWS_API_KEY")
 GROK_CONTENT_FILE = "grokContent"
 DISCORD_MAX_MESSAGE_LENGTH = 2000
 
@@ -18,7 +21,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
 
-# === TSLA and Market Data Fetching ===
+# === Market and News Data Fetching ===
 def calculate_rsi(data, periods=14):
     delta = data.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=periods).mean()
@@ -26,7 +29,7 @@ def calculate_rsi(data, periods=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-async def get_tsla_data():
+async def get_market_and_news_data():
     try:
         # Fetch TSLA data
         tsla = yf.Ticker("TSLA")
@@ -35,42 +38,42 @@ async def get_tsla_data():
         previous_close = tsla_info.get("previousClose", "N/A")
         
         if current_price == "N/A" or previous_close == "N/A":
-            return "Error: Could not retrieve TSLA price data."
-        
-        # Calculate TSLA gains
-        absolute_gain = current_price - previous_close
-        percentage_gain = (absolute_gain / previous_close) * 100
-        absolute_gain = round(absolute_gain, 2)
-        percentage_gain = round(percentage_gain, 2)
-        
-        # Get TSLA 1-month historical data
-        tsla_hist = tsla.history(period="1mo")
-        if tsla_hist.empty:
-            return "Error: Could not retrieve TSLA historical data."
-        
-        # Get last 5 days of TSLA closing prices
-        closing_prices = tsla_hist["Close"].round(2).tail(5).to_dict()
-        price_dev = ", ".join([f"{date.strftime('%Y-%m-%d')}: ${price}" for date, price in closing_prices.items()])
-        
-        # Calculate TSLA RSI
-        rsi = calculate_rsi(tsla_hist["Close"]).iloc[-1]
-        rsi_value = round(rsi, 2) if not pd.isna(rsi) else "N/A"
-        
-        # TSLA additional stats
-        market_cap = tsla_info.get("marketCap", "N/A")
-        pe_ratio = tsla_info.get("trailingPE", "N/A")
-        if market_cap != "N/A":
-            market_cap = f"${market_cap / 1e9:.2f}B"
-        if pe_ratio != "N/A":
-            pe_ratio = f"{pe_ratio:.2f}"
-        
-        tsla_data = (
-            f"Current $TSLA data: Price: ${current_price:.2f}, "
-            f"Gain: ${absolute_gain} ({percentage_gain}%), "
-            f"Market Cap: {market_cap}, P/E Ratio: {pe_ratio}, "
-            f"14-day RSI: {rsi_value}\n"
-            f"Recent Price Development (last 5 days): {price_dev}"
-        )
+            tsla_data = "Error: Could not retrieve TSLA price data."
+        else:
+            # Calculate TSLA gains
+            absolute_gain = current_price - previous_close
+            percentage_gain = (absolute_gain / previous_close) * 100
+            absolute_gain = round(absolute_gain, 2)
+            percentage_gain = round(percentage_gain, 2)
+            
+            # Get TSLA 1-month historical data
+            tsla_hist = tsla.history(period="1mo")
+            if tsla_hist.empty:
+                tsla_data = "Error: Could not retrieve TSLA historical data."
+            else:
+                # Get last 5 days of TSLA closing prices
+                closing_prices = tsla_hist["Close"].round(2).tail(5).to_dict()
+                price_dev = ", ".join([f"{date.strftime('%Y-%m-%d')}: ${price}" for date, price in closing_prices.items()])
+                
+                # Calculate TSLA RSI
+                rsi = calculate_rsi(tsla_hist["Close"]).iloc[-1]
+                rsi_value = round(rsi, 2) if not pd.isna(rsi) else "N/A"
+                
+                # TSLA additional stats
+                market_cap = tsla_info.get("marketCap", "N/A")
+                pe_ratio = tsla_info.get("trailingPE", "N/A")
+                if market_cap != "N/A":
+                    market_cap = f"${market_cap / 1e9:.2f}B"
+                if pe_ratio != "N/A":
+                    pe_ratio = f"{pe_ratio:.2f}"
+                
+                tsla_data = (
+                    f"Current $TSLA data: Price: ${current_price:.2f}, "
+                    f"Gain: ${absolute_gain} ({percentage_gain}%), "
+                    f"Market Cap: {market_cap}, P/E Ratio: {pe_ratio}, "
+                    f"14-day RSI: {rsi_value}\n"
+                    f"Recent Price Development (last 5 days): {price_dev}"
+                )
         
         # Fetch VIX and SPY data
         vix = yf.Ticker("^VIX")
@@ -78,39 +81,56 @@ async def get_tsla_data():
         vix_value = vix.info.get("regularMarketPrice", "N/A")
         spy_current = spy.info.get("regularMarketPrice", "N/A")
         
-        # Get SPY all-time high (from historical data)
         spy_hist = spy.history(period="max")
-        if spy_hist.empty:
-            market_mood = "Error: Could not retrieve SPY historical data."
+        if spy_hist.empty or vix_value == "N/A" or spy_current == "N/A":
+            market_mood = "Error: Could not retrieve VIX or SPY data."
         else:
             spy_ath = spy_hist["High"].max()
-            if spy_current != "N/A" and spy_ath:
-                spy_percent_from_ath = ((spy_current - spy_ath) / spy_ath) * 100
-                spy_percent_from_ath = round(spy_percent_from_ath, 2)
-            else:
-                spy_percent_from_ath = "N/A"
+            spy_percent_from_ath = ((spy_current - spy_ath) / spy_ath) * 100
+            spy_percent_from_ath = round(spy_percent_from_ath, 2)
             
             # Interpret VIX sentiment
-            if vix_value == "N/A":
-                vix_sentiment = "N/A"
-            elif vix_value < 15:
-                vix_sentiment = "Optimism (low volatility)"
-            elif 15 <= vix_value <= 25:
-                vix_sentiment = "Normal"
-            elif 25 < vix_value <= 30:
-                vix_sentiment = "Turbulence"
-            else:
-                vix_sentiment = "High fear"
+            vix_sentiment = (
+                "Optimism (low volatility)" if vix_value < 15 else
+                "Normal" if 15 <= vix_value <= 25 else
+                "Turbulence" if 25 < vix_value <= 30 else
+                "High fear"
+            )
             
             market_mood = (
                 f"Market Mood: VIX: {vix_value:.2f} ({vix_sentiment}), "
                 f"SPY: ${spy_current:.2f}, {spy_percent_from_ath}% from ATH"
             )
         
-        return f"{tsla_data}\n\n{market_mood}"
+        # Fetch world news
+        if not NEWS_API_KEY:
+            news_data = "Error: News API key is not configured."
+        else:
+            news_url = (
+                f"https://newsapi.org/v2/top-headlines?"
+                f"category=general&language=en&sortBy=publishedAt&apiKey={NEWS_API_KEY}"
+            )
+            async with aiohttp.ClientSession() as session:
+                async with session.get(news_url) as response:
+                    if response.status == 200:
+                        news_json = await response.json()
+                        articles = news_json.get("articles", [])[:3]  # Limit to 3 headlines
+                        if not articles:
+                            news_data = "No recent world news available."
+                        else:
+                            news_items = [
+                                f"{i+1}. {article['title']} ({article['source']['name']}, "
+                                f"{datetime.strptime(article['publishedAt'], '%Y-%m-%dT%H:%M:%SZ').strftime('%Y-%m-%d')})"
+                                for i, article in enumerate(articles)
+                            ]
+                            news_data = "Recent World News:\n" + "\n".join(news_items)
+                    else:
+                        news_data = f"Error: Failed to fetch news (status {response.status})."
+        
+        return f"{tsla_data}\n\n{market_mood}\n\n{news_data}"
     except Exception as e:
-        print(f"[ERROR] Failed to fetch market data: {type(e).__name__}: {str(e)}")
-        return "Error: Failed to fetch TSLA or market data."
+        print(f"[ERROR] Failed to fetch market or news data: {type(e).__name__}: {str(e)}")
+        return "Error: Failed to fetch TSLA, market, or news data."
 
 # === Grok API Integration ===
 async def query_grok(prompt: str) -> str:
@@ -129,9 +149,9 @@ async def query_grok(prompt: str) -> str:
         print(f"[ERROR] Failed to read {GROK_CONTENT_FILE}: {str(e)}")
         return f"Error: Failed to read {GROK_CONTENT_FILE} - {str(e)}"
 
-    # Fetch TSLA and market data, append to user prompt
-    market_data = await get_tsla_data()
-    enhanced_prompt = f"{prompt}\n\n{market_data}"
+    # Fetch market and news data, append to user prompt
+    market_and_news_data = await get_market_and_news_data()
+    enhanced_prompt = f"{prompt}\n\n{market_and_news_data}"
     
     url = "https://api.x.ai/v1/chat/completions"
     headers = {
