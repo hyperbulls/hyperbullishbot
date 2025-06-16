@@ -209,4 +209,17 @@ async def on_message(message: discord.Message):
                 )
             except discord.errors.Forbidden:
                 print(f"[ERROR] Unable to DM user {message.author.id} about permission issue")
-        except discord.errors.HTTPException as
+        except discord.errors.HTTPException as e:
+            print(f"[ERROR] Failed to send mention response: {type(e).__name__}: {str(e)}")
+            try:
+                await message.channel.send("Error: Failed to send response.")
+            except discord.errors.Forbidden:
+                print(f"[ERROR] Missing permissions to send error message in channel {message.channel.id}")
+
+# === On Ready ===
+@client.event
+async def on_ready():
+    print(f"✅ Logged in as {client.user} (ID: {client.user.id})")
+
+# === Run ===
+client.run(TOKEN)
