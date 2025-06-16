@@ -92,8 +92,9 @@ async def query_grok(prompt: str) -> str:
         print(f"[ERROR] Failed to read {GROK_CONTENT_FILE}: {str(e)}")
         return f"Error: Failed to read {GROK_CONTENT_FILE} - {str(e)}"
 
-    # Fetch TSLA data
+    # Fetch TSLA data and append to user prompt
     tsla_data = await get_tsla_data()
+    enhanced_prompt = f"{prompt}\n\n{tsla_data}"
     
     url = "https://api.x.ai/v1/chat/completions"
     headers = {
@@ -104,7 +105,7 @@ async def query_grok(prompt: str) -> str:
         "model": "grok-3-mini",
         "messages": [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": prompt}
+            {"role": "user", "content": enhanced_prompt}
         ]
     }
 
@@ -118,14 +119,12 @@ async def query_grok(prompt: str) -> str:
                         result = await response.json()
                         content = result.get("choices", [{}])[0].get("message", {}).get("content", "No response received from Grok.")
                         print(f"[DEBUG] Grok response length: {len(content)} characters")
-                        # Prepend TSLA data to Grok response
-                        full_response = f"{tsla_data}\n\n{content}"
-                        if len(full_response) > DISCORD_MAX_MESSAGE_LENGTH:
-                            full_response = full_response[:DISCORD_MAX_MESSAGE_LENGTH - 50] + "... (truncated due to length)"
-                        return full_response
+                        if len(content) > DISCORD_MAX_MESSAGE_LENGTH:
+                            content = content[:DISCORD_MAX_MESSAGE_LENGTH - 50] + "... (truncated due to length)"
+                        return content
                     else:
                         error_body = await response.text()
-                        return f"{tsla_data}\n\nError: API request failed with status {response.status}: {response.reason}\nHeaders: {response.headers}\nBody: {error_body[:1000]}"
+                        return f"Error: API request failed with status {response.status}: {response.reason}\nHeaders: {response.headers}\nBody: {error_body[:1000]}"
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             print(f"[ERROR] API request attempt {attempt + 1} failed: {type(e).__name__}: {str(e)}")
             if attempt < 2:
@@ -133,8 +132,8 @@ async def query_grok(prompt: str) -> str:
             continue
         except Exception as e:
             print(f"[ERROR] Unexpected error in API request: {type(e).__name__}: {str(e)}")
-            return f"{tsla_data}\n\nError: Failed to connect to Grok API - {str(e)}"
-    return f"{tsla_data}\n\nError: Failed to connect to Grok API after 3 attempts."
+            return f"Error: Failed to connect to Grok API - {str(e)}"
+    return "Error: Failed to connect to Grok API after 3 attempts."
 
 # === On Message: Handle Bot Mentions ===
 @client.event
