@@ -7,6 +7,7 @@ import yfinance as yf
 import pandas as pd
 import requests
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 
 # === Load .env and constants ===
 load_dotenv()
@@ -21,7 +22,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
 
-# === Market, News, and Earnings Data Fetching ===
+# === Market, News, Earnings, and Timestamp Data Fetching ===
 def calculate_rsi(data, periods=14):
     delta = data.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=periods).mean()
@@ -31,6 +32,11 @@ def calculate_rsi(data, periods=14):
 
 async def get_market_and_news_data():
     try:
+        # Get current date and time in CEST
+        cest = ZoneInfo("Europe/Amsterdam")
+        current_time = datetime.now(cest).strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = f"Data as of: {current_time} CEST"
+        
         # Fetch TSLA data
         tsla = yf.Ticker("TSLA")
         tsla_info = tsla.info
@@ -99,14 +105,21 @@ async def get_market_and_news_data():
         spy = yf.Ticker("SPY")
         vix_value = vix.info.get("regularMarketPrice", "N/A")
         spy_current = spy.info.get("regularMarketPrice", "N/A")
+        spy_previous_close = spy.info.get("previousClose", "N/A")
         
         spy_hist = spy.history(period="max")
-        if spy_hist.empty or vix_value == "N/A" or spy_current == "N/A":
+        if spy_hist.empty or vix_value == "N/A" or spy_current == "N/A" or spy_previous_close == "N/A":
             market_mood = "Error: Could not retrieve VIX or SPY data."
         else:
             spy_ath = spy_hist["High"].max()
             spy_percent_from_ath = ((spy_current - spy_ath) / spy_ath) * 100
             spy_percent_from_ath = round(spy_percent_from_ath, 2)
+            
+            # Calculate SPY daily gain
+            spy_absolute_gain = spy_current - spy_previous_close
+            spy_percentage_gain = (spy_absolute_gain / spy_previous_close) * 100
+            spy_absolute_gain = round(spy_absolute_gain, 2)
+            spy_percentage_gain = round(spy_percentage_gain, 2)
             
             # Interpret VIX sentiment
             vix_sentiment = (
@@ -118,7 +131,8 @@ async def get_market_and_news_data():
             
             market_mood = (
                 f"Market Mood: VIX: {vix_value:.2f} ({vix_sentiment}), "
-                f"SPY: ${spy_current:.2f}, {spy_percent_from_ath}% from ATH"
+                f"SPY: ${spy_current:.2f} (Gain: ${spy_absolute_gain} ({spy_percentage_gain}%), "
+                f"{spy_percent_from_ath}% from ATH)"
             )
         
         # Fetch world news
@@ -146,10 +160,10 @@ async def get_market_and_news_data():
                     else:
                         news_data = f"Error: Failed to fetch news (status {response.status})."
         
-        return f"{tsla_data}\n\n{earnings_data}\n\n{market_mood}\n\n{news_data}"
+        return f"{tsla_data}\n\n{earnings_data}\n\n{market_mood}\n\n{news_data}\n\n{timestamp}"
     except Exception as e:
-        print(f"[ERROR] Failed to fetch market, earnings, or news data: {type(e).__name__}: {str(e)}")
-        return "Error: Failed to fetch TSLA, earnings, market, or news data."
+        print(f"[ERROR] Failed to fetch market, earnings, news, or timestamp data: {type(e).__name__}: {str(e)}")
+        return "Error: Failed to fetch TSLA, earnings, market, news, or timestamp data."
 
 # === Grok API Integration ===
 async def query_grok(prompt: str) -> str:
@@ -168,7 +182,7 @@ async def query_grok(prompt: str) -> str:
         print(f"[ERROR] Failed to read {GROK_CONTENT_FILE}: {str(e)}")
         return f"Error: Failed to read {GROK_CONTENT_FILE} - {str(e)}"
 
-    # Fetch market, earnings, and news data, append to user prompt
+    # Fetch market, earnings, news, and timestamp data, append to user prompt
     market_and_news_data = await get_market_and_news_data()
     enhanced_prompt = f"{prompt}\n\n{market_and_news_data}"
     
