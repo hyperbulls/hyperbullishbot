@@ -69,4 +69,144 @@ async def get_tsla_data():
             f"Gain: ${absolute_gain} ({percentage_gain}%), "
             f"Market Cap: {market_cap}, P/E Ratio: {pe_ratio}, "
             f"14-day RSI: {rsi_value}\n"
-            f"Recent Price Development (last
+            f"Recent Price Development (last 5 days): {price_dev}"
+        )
+        
+        # Fetch VIX and SPY data
+        vix = yf.Ticker("^VIX")
+        spy = yf.Ticker("SPY")
+        vix_value = vix.info.get("regularMarketPrice", "N/A")
+        spy_current = spy.info.get("regularMarketPrice", "N/A")
+        
+        # Get SPY all-time high (from historical data)
+        spy_hist = spy.history(period="max")
+        if spy_hist.empty:
+            market_mood = "Error: Could not retrieve SPY historical data."
+        else:
+            spy_ath = spy_hist["High"].max()
+            if spy_current != "N/A" and spy_ath:
+                spy_percent_from_ath = ((spy_current - spy_ath) / spy_ath) * 100
+                spy_percent_from_ath = round(spy_percent_from_ath, 2)
+            else:
+                spy_percent_from_ath = "N/A"
+            
+            # Interpret VIX sentiment
+            if vix_value == "N/A":
+                vix_sentiment = "N/A"
+            elif vix_value < 15:
+                vix_sentiment = "Optimism (low volatility)"
+            elif 15 <= vix_value <= 25:
+                vix_sentiment = "Normal"
+            elif 25 < vix_value <= 30:
+                vix_sentiment = "Turbulence"
+            else:
+                vix_sentiment = "High fear"
+            
+            market_mood = (
+                f"Market Mood: VIX: {vix_value:.2f} ({vix_sentiment}), "
+                f"SPY: ${spy_current:.2f}, {spy_percent_from_ath}% from ATH"
+            )
+        
+        return f"{tsla_data}\n\n{market_mood}"
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch market data: {type(e).__name__}: {str(e)}")
+        return "Error: Failed to fetch TSLA or market data."
+
+# === Grok API Integration ===
+async def query_grok(prompt: str) -> str:
+    if not XAI_API_KEY:
+        return "Error: xAI API key is not configured. Please contact the bot administrator."
+    
+    # Read system prompt from grokContent file
+    try:
+        with open(GROK_CONTENT_FILE, "r") as f:
+            system_prompt = f.read().strip()
+        print(f"[DEBUG] Loaded system prompt from {GROK_CONTENT_FILE}, length: {len(system_prompt)} characters")
+    except FileNotFoundError:
+        print(f"[ERROR] {GROK_CONTENT_FILE} not found")
+        return f"Error: {GROK_CONTENT_FILE} not found. Please create it with the system prompt."
+    except IOError as e:
+        print(f"[ERROR] Failed to read {GROK_CONTENT_FILE}: {str(e)}")
+        return f"Error: Failed to read {GROK_CONTENT_FILE} - {str(e)}"
+
+    # Fetch TSLA and market data, append to user prompt
+    market_data = await get_tsla_data()
+    enhanced_prompt = f"{prompt}\n\n{market_data}"
+    
+    url = "https://api.x.ai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {XAI_API_KEY}",
+        "Content-Type": "application/json"
+    }
+    data = {
+        "model": "grok-3-mini",
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": enhanced_prompt}
+        ]
+    }
+
+    timeout = aiohttp.ClientTimeout(total=20)
+    for attempt in range(3):
+        try:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(url, headers=headers, json=data) as response:
+                    print(f"[DEBUG] API request attempt {attempt + 1}, status: {response.status}")
+                    if response.status == 200:
+                        result = await response.json()
+                        content = result.get("choices", [{}])[0].get("message", {}).get("content", "No response received from Grok.")
+                        print(f"[DEBUG] Grok response length: {len(content)} characters")
+                        if len(content) > DISCORD_MAX_MESSAGE_LENGTH:
+                            content = content[:DISCORD_MAX_MESSAGE_LENGTH - 50] + "... (truncated due to length)"
+                        return content
+                    else:
+                        error_body = await response.text()
+                        return f"Error: API request failed with status {response.status}: {response.reason}\nHeaders: {response.headers}\nBody: {error_body[:1000]}"
+        except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+            print(f"[ERROR] API request attempt {attempt + 1} failed: {type(e).__name__}: {str(e)}")
+            if attempt < 2:
+                await asyncio.sleep(2 ** attempt)
+            continue
+        except Exception as e:
+            print(f"[ERROR] Unexpected error in API request: {type(e).__name__}: {str(e)}")
+            return f"Error: Failed to connect to Grok API - {str(e)}"
+    return "Error: Failed to connect to Grok API after 3 attempts."
+
+# === On Message: Handle Bot Mentions ===
+@client.event
+async def on_message(message: discord.Message):
+    if message.author.bot:
+        return
+
+    bot_mentioned = client.user in message.mentions or message.content.lower().startswith(client.user.name.lower())
+    
+    if bot_mentioned:
+        query = message.content
+        if client.user in message.mentions:
+            query = query.replace(f"<@{client.user.id}>", "").strip()
+            query = query.replace(f"<@!{client.user.id}>", "").strip()
+        elif message.content.lower().startswith(client.user.name.lower()):
+            query = query[len(client.user.name):].strip()
+
+        if not query:
+            try:
+                await message.channel.send("Please ask a question after mentioning me!")
+            except discord.errors.Forbidden:
+                print(f"[ERROR] Missing permissions to send message in channel {message.channel.id}")
+            return
+
+        try:
+            async with message.channel.typing():
+                response = await query_grok(query)
+                print(f"[DEBUG] Sending mention response: {response[:50]}...")
+                await message.channel.send(response)
+        except discord.errors.Forbidden:
+            print(f"[ERROR] Missing permissions in channel {message.channel.id}")
+            try:
+                await message.author.send(
+                    f"I can't respond in {message.channel.name} due to missing permissions. "
+                    "Please ask a server admin to grant me Send Messages permission, or try another channel."
+                )
+            except discord.errors.Forbidden:
+                print(f"[ERROR] Unable to DM user {message.author.id} about permission issue")
+        except discord.errors.HTTPException as
