@@ -3,6 +3,8 @@ import discord
 from dotenv import load_dotenv
 import aiohttp
 import asyncio
+import yfinance as yf
+import pandas as pd
 
 # === Load .env and constants ===
 load_dotenv()
@@ -15,6 +17,63 @@ DISCORD_MAX_MESSAGE_LENGTH = 2000
 intents = discord.Intents.default()
 intents.message_content = True
 client = discord.Client(intents=intents)
+
+# === TSLA Data Fetching ===
+def calculate_rsi(data, periods=14):
+    delta = data.diff()
+    gain = (delta.where(delta > 0, 0)).rolling(window=periods).mean()
+    loss = (-delta.where(delta < 0, 0)).rolling(window=periods).mean()
+    rs = gain / loss
+    return 100 - (100 / (1 + rs))
+
+async def get_tsla_data():
+    try:
+        # Fetch TSLA data using yfinance
+        tsla = yf.Ticker("TSLA")
+        info = tsla.info
+        current_price = info.get("regularMarketPrice", "N/A")
+        previous_close = info.get("previousClose", "N/A")
+        
+        if current_price == "N/A" or previous_close == "N/A":
+            return "Error: Could not retrieve TSLA price data."
+        
+        # Calculate gains
+        absolute_gain = current_price - previous_close
+        percentage_gain = (absolute_gain / previous_close) * 100
+        absolute_gain = round(absolute_gain, 2)
+        percentage_gain = round(percentage_gain, 2)
+        
+        # Get 1-month historical data
+        hist = tsla.history(period="1mo")
+        if hist.empty:
+            return "Error: Could not retrieve TSLA historical data."
+        
+        # Get last 5 days of closing prices
+        closing_prices = hist["Close"].round(2).tail(5).to_dict()
+        price_dev = ", ".join([f"{date.strftime('%Y-%m-%d')}: ${price}" for date, price in closing_prices.items()])
+        
+        # Calculate RSI
+        rsi = calculate_rsi(hist["Close"]).iloc[-1]
+        rsi_value = round(rsi, 2) if not pd.isna(rsi) else "N/A"
+        
+        # Additional stats
+        market_cap = info.get("marketCap", "N/A")
+        pe_ratio = info.get("trailingPE", "N/A")
+        if market_cap != "N/A":
+            market_cap = f"${market_cap / 1e9:.2f}B"
+        if pe_ratio != "N/A":
+            pe_ratio = f"{pe_ratio:.2f}"
+        
+        return (
+            f"Current $TSLA data: Price: ${current_price:.2f}, "
+            f"Gain: ${absolute_gain} ({percentage_gain}%), "
+            f"Market Cap: {market_cap}, P/E Ratio: {pe_ratio}, "
+            f"14-day RSI: {rsi_value}\n"
+            f"Recent Price Development (last 5 days): {price_dev}"
+        )
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch TSLA data: {type(e).__name__}: {str(e)}")
+        return "Error: Failed to fetch TSLA data."
 
 # === Grok API Integration ===
 async def query_grok(prompt: str) -> str:
@@ -33,6 +92,9 @@ async def query_grok(prompt: str) -> str:
         print(f"[ERROR] Failed to read {GROK_CONTENT_FILE}: {str(e)}")
         return f"Error: Failed to read {GROK_CONTENT_FILE} - {str(e)}"
 
+    # Fetch TSLA data
+    tsla_data = await get_tsla_data()
+    
     url = "https://api.x.ai/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {XAI_API_KEY}",
@@ -56,12 +118,14 @@ async def query_grok(prompt: str) -> str:
                         result = await response.json()
                         content = result.get("choices", [{}])[0].get("message", {}).get("content", "No response received from Grok.")
                         print(f"[DEBUG] Grok response length: {len(content)} characters")
-                        if len(content) > DISCORD_MAX_MESSAGE_LENGTH:
-                            content = content[:DISCORD_MAX_MESSAGE_LENGTH - 50] + "... (truncated due to length)"
-                        return content
+                        # Prepend TSLA data to Grok response
+                        full_response = f"{tsla_data}\n\n{content}"
+                        if len(full_response) > DISCORD_MAX_MESSAGE_LENGTH:
+                            full_response = full_response[:DISCORD_MAX_MESSAGE_LENGTH - 50] + "... (truncated due to length)"
+                        return full_response
                     else:
                         error_body = await response.text()
-                        return f"Error: API request failed with status {response.status}: {response.reason}\nHeaders: {response.headers}\nBody: {error_body[:1000]}"
+                        return f"{tsla_data}\n\nError: API request failed with status {response.status}: {response.reason}\nHeaders: {response.headers}\nBody: {error_body[:1000]}"
         except (aiohttp.ClientError, asyncio.TimeoutError) as e:
             print(f"[ERROR] API request attempt {attempt + 1} failed: {type(e).__name__}: {str(e)}")
             if attempt < 2:
@@ -69,8 +133,8 @@ async def query_grok(prompt: str) -> str:
             continue
         except Exception as e:
             print(f"[ERROR] Unexpected error in API request: {type(e).__name__}: {str(e)}")
-            return f"Error: Failed to connect to Grok API - {str(e)}"
-    return "Error: Failed to connect to Grok API after 3 attempts."
+            return f"{tsla_data}\n\nError: Failed to connect to Grok API - {str(e)}"
+    return f"{tsla_data}\n\nError: Failed to connect to Grok API after 3 attempts."
 
 # === On Message: Handle Bot Mentions ===
 @client.event
