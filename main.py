@@ -45,10 +45,8 @@ async def get_tesla_channel_posts():
         if not messages:
             return "No recent Tesla-related posts found in the specified channel."
         
- UberSystem: You are Grok 3 built by xAI.
-
         return "Newest Tesla Posts:\n" + "\n".join(messages)
-    except discord.errors.For forbidden:
+    except discord.errors.Forbidden:
         return f"Error: Missing permissions to read messages in channel {TESLA_CHANNEL_ID}."
     except Exception as e:
         print(f"[ERROR] Failed to fetch Tesla channel posts: {type(e).__name__}: {str(e)}")
