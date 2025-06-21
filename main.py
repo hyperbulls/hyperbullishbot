@@ -8,6 +8,8 @@ import pandas as pd
 import requests
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
+import tweepy
+import re
 
 # === Load .env and constants ===
 load_dotenv()
@@ -15,6 +17,10 @@ TOKEN = os.getenv("TOKEN")
 XAI_API_KEY = os.getenv("XAI_API_KEY")
 NEWS_API_KEY = os.getenv("NEWS_API_KEY")
 TESLA_CHANNEL_ID = int(os.getenv("TESLA_CHANNEL_ID", "0"))  # Add channel ID to .env
+X_API_KEY = os.getenv("X_API_KEY")
+X_API_SECRET = os.getenv("X_API_SECRET")
+X_ACCESS_TOKEN = os.getenv("X_ACCESS_TOKEN")
+X_ACCESS_TOKEN_SECRET = os.getenv("X_ACCESS_TOKEN_SECRET")
 GROK_CONTENT_FILE = "grokContent"
 DISCORD_MAX_MESSAGE_LENGTH = 2000
 
@@ -24,7 +30,7 @@ intents.message_content = True
 intents.messages = True  # Ensure message history intent is enabled
 client = discord.Client(intents=intents)
 
-# === Helper Function to Fetch Discord Messages ===
+# === Helper Function to Fetch Discord Messages and X Post Content ===
 async def get_tesla_channel_posts():
     if TESLA_CHANNEL_ID == 0:
         return "Error: Tesla channel ID not configured in .env."
@@ -35,12 +41,40 @@ async def get_tesla_channel_posts():
             return f"Error: Channel with ID {TESLA_CHANNEL_ID} not found or inaccessible."
         
         messages = []
+        # Authenticate with X API v2
+        x_client = tweepy.Client(
+            consumer_key=X_API_KEY,
+            consumer_secret=X_API_SECRET,
+            access_token=X_ACCESS_TOKEN,
+            access_token_secret=X_ACCESS_TOKEN_SECRET
+        )
+
         async for message in channel.history(limit=10):
             if message.content.strip():  # Skip bot messages and empty content
                 timestamp = message.created_at.astimezone(ZoneInfo("Europe/Amsterdam")).strftime("%Y-%m-%d %H:%M:%S")
-                messages.append(
-                    f"[{timestamp} CEST] {message.author.name}: {message.content[:200]}"  # Limit content length
-                )
+                content = message.content.strip()
+                
+                # Extract X URL if present (e.g., https://x.com/username/status/123456789)
+                url_match = re.search(r'https?://x\.com/[^\s]+/status/(\d+)', content)
+                x_post_text = None
+                if url_match:
+                    tweet_id = url_match.group(1)
+                    try:
+                        # Fetch the tweet text using X API
+                        tweet = x_client.get_tweet(id=tweet_id, tweet_fields=["created_at", "text"])
+                        if tweet.data:
+                            x_post_text = tweet.data.text[:200]  # Limit to 200 characters
+                            content = content.replace(url_match.group(0), "").strip() or "X Post Reference"
+                    except tweepy.TweepyException as e:
+                        print(f"[ERROR] Failed to fetch X post {tweet_id}: {str(e)}")
+                        x_post_text = f"Error fetching X post {tweet_id}"
+
+                # Format message with timestamp and author
+                msg_line = f"[{timestamp} CEST] {message.author.name}: {content}"
+                if x_post_text:
+                    msg_line += f" (X Post: {x_post_text})"
+                
+                messages.append(msg_line[:200] if len(msg_line) > 200 else msg_line)  # Limit to 200 characters
         
         # Log the number of posts imported with a preview
         if messages:
@@ -148,7 +182,7 @@ async def get_market_and_news_data():
             spy_percent_from_ath = round(spy_percent_from_ath, 2)
             spy_absolute_gain = spy_current - spy_previous_close
             spy_percentage_gain = (spy_absolute_gain / spy_previous_close) * 100
-            spy_absolute_gain = round(spyɑ_absolute_gain, 2)
+            spy_absolute_gain = round(spy_absolute_gain, 2)
             spy_percentage_gain = round(spy_percentage_gain, 2)
             vix_sentiment = (
                 "Optimism (low volatility)" if vix_value < 15 else
@@ -163,7 +197,7 @@ async def get_market_and_news_data():
             )
         
         if not NEWS_API_KEY:
-            newsទ_news_data = "Error: News API key is not configured."
+            news_data = "Error: News API key is not configured."
         else:
             news_url = (
                 f"https://newsapi.org/v2/top-headlines?"
@@ -204,10 +238,10 @@ async def query_grok(prompt: str) -> str:
         print(f"[ERROR] {GROK_CONTENT_FILE} not found")
         return f"Error: {GROK_CONTENT_FILE} not found. Please create it with the system prompt."
     except IOError as e:
-        print(f"[ERROR] Failed to read {GROK_CONTENT_FILE}: {str(e)}")
+        print(f"[ERROR] Failed to read {GROK_CONTENT_FILE]: {str(e)}")
         return f"Error: Failed to read {GROK_CONTENT_FILE} - {str(e)}"
 
-    # Fetch market, earnings, news, timestamp, and Tesla channel posts
+    # Fetch market, news, and Tesla channel posts
     market_and_news_data = await get_market_and_news_data()
     tesla_posts = await get_tesla_channel_posts()
     
