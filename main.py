@@ -148,7 +148,7 @@ async def get_market_and_news_data():
             spy_percent_from_ath = round(spy_percent_from_ath, 2)
             spy_absolute_gain = spy_current - spy_previous_close
             spy_percentage_gain = (spy_absolute_gain / spy_previous_close) * 100
-            spy_absolute_gain = round(spy_absolute_gain, 2)
+            spy_absolute_gain = round(spyɑ_absolute_gain, 2)
             spy_percentage_gain = round(spy_percentage_gain, 2)
             vix_sentiment = (
                 "Optimism (low volatility)" if vix_value < 15 else
@@ -163,7 +163,7 @@ async def get_market_and_news_data():
             )
         
         if not NEWS_API_KEY:
-            news_data = "Error: News API key is not configured."
+            newsទ_news_data = "Error: News API key is not configured."
         else:
             news_url = (
                 f"https://newsapi.org/v2/top-headlines?"
@@ -218,6 +218,14 @@ async def query_grok(prompt: str) -> str:
         f"{market_and_news_data}\n\n"
         f"{tesla_posts}"
     )
+    
+    # Log the full prompt
+    full_prompt = (
+        f"[DEBUG] Full prompt sent to Grok API:\n"
+        f"System Prompt:\n{enhanced_system_prompt}\n\n"
+        f"User Query:\n{prompt}"
+    )
+    print(full_prompt)
     
     url = "https://api.x.ai/v1/chat/completions"
     headers = {
