@@ -235,10 +235,10 @@ async def query_grok(prompt: str) -> str:
             static_system_prompt = f.read().strip()
         print(f"[DEBUG] Loaded system prompt from {GROK_CONTENT_FILE}, length: {len(static_system_prompt)} characters")
     except FileNotFoundError:
-        print(f"[ERROR] {GROK_CONTENT_FILE} not found")
+        print(f"[ERROR] Failed to read {GROK_CONTENT_FILE}: File not found")
         return f"Error: {GROK_CONTENT_FILE} not found. Please create it with the system prompt."
     except IOError as e:
-        print(f"[ERROR] Failed to read {GROK_CONTENT_FILE]: {str(e)}")
+        print(f"[ERROR] Failed to read {GROK_CONTENT_FILE}: {str(e)}")
         return f"Error: Failed to read {GROK_CONTENT_FILE} - {str(e)}"
 
     # Fetch market, news, and Tesla channel posts
