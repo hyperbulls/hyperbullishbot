@@ -42,11 +42,22 @@ async def get_tesla_channel_posts():
                     f"[{timestamp} CEST] {message.author.name}: {message.content[:200]}"  # Limit content length
                 )
         
+        # Log the number of posts imported with a preview
+        if messages:
+            print(f"[DEBUG] Imported {len(messages)} Tesla posts from channel {TESLA_CHANNEL_ID}:")
+            for i, msg in enumerate(messages, 1):
+                preview = msg[50:]  # Skip timestamp and author for preview
+                preview = preview[:50] + "..." if len(preview) > 50 else preview
+                print(f"[DEBUG] Post {i}: {preview}")
+        else:
+            print(f"[DEBUG] No valid Tesla posts found in channel {TESLA_CHANNEL_ID}")
+        
         if not messages:
             return "No recent Tesla-related posts found in the specified channel."
         
         return "Newest Tesla Posts:\n" + "\n".join(messages)
     except discord.errors.Forbidden:
+        print(f"[ERROR] Missing permissions to read messages in channel {TESLA_CHANNEL_ID}")
         return f"Error: Missing permissions to read messages in channel {TESLA_CHANNEL_ID}."
     except Exception as e:
         print(f"[ERROR] Failed to fetch Tesla channel posts: {type(e).__name__}: {str(e)}")
@@ -159,7 +170,7 @@ async def get_market_and_news_data():
                 f"category=general&language=en&sortBy=publishedAt&apiKey={NEWS_API_KEY}"
             )
             async with aiohttp.ClientSession() as session:
-                async with session.get(newws_url) as response:
+                async with session.get(news_url) as response:
                     if response.status == 200:
                         news_json = await response.json()
                         articles = news_json.get("articles", [])[:3]
@@ -224,7 +235,7 @@ async def query_grok(prompt: str) -> str:
     timeout = aiohttp.ClientTimeout(total=20)
     for attempt in range(3):
         try:
- async with aiohttp.ClientSession(timeout=timeout) as session:
+            async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(url, headers=headers, json=data) as response:
                     print(f"[DEBUG] API request attempt {attempt + 1}, status: {response.status}")
                     if response.status == 200:
