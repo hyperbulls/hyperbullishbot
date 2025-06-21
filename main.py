@@ -36,7 +36,7 @@ async def get_tesla_channel_posts():
         
         messages = []
         async for message in channel.history(limit=10):
-            if not message.author.bot and message.content.strip():  # Skip bot messages and empty content
+            if message.content.strip():  # Skip bot messages and empty content
                 timestamp = message.created_at.astimezone(ZoneInfo("Europe/Amsterdam")).strftime("%Y-%m-%d %H:%M:%S")
                 messages.append(
                     f"[{timestamp} CEST] {message.author.name}: {message.content[:200]}"  # Limit content length
