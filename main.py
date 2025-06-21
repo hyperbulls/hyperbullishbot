@@ -14,13 +14,45 @@ load_dotenv()
 TOKEN = os.getenv("TOKEN")
 XAI_API_KEY = os.getenv("XAI_API_KEY")
 NEWS_API_KEY = os.getenv("NEWS_API_KEY")
+TESLA_CHANNEL_ID = int(os.getenv("TESLA_CHANNEL_ID", "0"))  # Add channel ID to .env
 GROK_CONTENT_FILE = "grokContent"
 DISCORD_MAX_MESSAGE_LENGTH = 2000
 
 # === Bot Setup ===
 intents = discord.Intents.default()
 intents.message_content = True
+intents.messages = True  # Ensure message history intent is enabled
 client = discord.Client(intents=intents)
+
+# === Helper Function to Fetch Discord Messages ===
+async def get_tesla_channel_posts():
+    if TESLA_CHANNEL_ID == 0:
+        return "Error: Tesla channel ID not configured in .env."
+    
+    try:
+        channel = client.get_channel(TESLA_CHANNEL_ID)
+        if not channel:
+            return f"Error: Channel with ID {TESLA_CHANNEL_ID} not found or inaccessible."
+        
+        messages = []
+        async for message in channel.history(limit=10):
+            if not message.author.bot and message.content.strip():  # Skip bot messages and empty content
+                timestamp = message.created_at.astimezone(ZoneInfo("Europe/Amsterdam")).strftime("%Y-%m-%d %H:%M:%S")
+                messages.append(
+                    f"[{timestamp} CEST] {message.author.name}: {message.content[:200]}"  # Limit content length
+                )
+        
+        if not messages:
+            return "No recent Tesla-related posts found in the specified channel."
+        
+ UberSystem: You are Grok 3 built by xAI.
+
+        return "Newest Tesla Posts:\n" + "\n".join(messages)
+    except discord.errors.For forbidden:
+        return f"Error: Missing permissions to read messages in channel {TESLA_CHANNEL_ID}."
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch Tesla channel posts: {type(e).__name__}: {str(e)}")
+        return f"Error: Failed to fetch Tesla channel posts - {str(e)}"
 
 # === Market, News, Earnings, and Timestamp Data Fetching ===
 def calculate_rsi(data, periods=14):
@@ -46,26 +78,19 @@ async def get_market_and_news_data():
         if current_price == "N/A" or previous_close == "N/A":
             tsla_data = "Error: Could not retrieve TSLA price data."
         else:
-            # Calculate TSLA gains
             absolute_gain = current_price - previous_close
             percentage_gain = (absolute_gain / previous_close) * 100
             absolute_gain = round(absolute_gain, 2)
             percentage_gain = round(percentage_gain, 2)
             
-            # Get TSLA 1-month historical data
             tsla_hist = tsla.history(period="1mo")
             if tsla_hist.empty:
                 tsla_data = "Error: Could not retrieve TSLA historical data."
             else:
-                # Get last 5 days of TSLA closing prices
                 closing_prices = tsla_hist["Close"].round(2).tail(5).to_dict()
                 price_dev = ", ".join([f"{date.strftime('%Y-%m-%d')}: ${price}" for date, price in closing_prices.items()])
-                
-                # Calculate TSLA RSI
                 rsi = calculate_rsi(tsla_hist["Close"]).iloc[-1]
                 rsi_value = round(rsi, 2) if not pd.isna(rsi) else "N/A"
-                
-                # TSLA additional stats
                 market_cap = tsla_info.get("marketCap", "N/A")
                 pe_ratio = tsla_info.get("trailingPE", "N/A")
                 if market_cap != "N/A":
@@ -81,15 +106,14 @@ async def get_market_and_news_data():
                     f"Recent Price Development (last 5 days): {price_dev}"
                 )
         
-        # Fetch TSLA earnings data
         earnings = tsla.quarterly_financials
         if earnings.empty:
             earnings_data = "Error: Could not retrieve TSLA earnings data."
         else:
-            latest_quarter = earnings.columns[0]  # Most recent quarter
+            latest_quarter = earnings.columns[0]
             revenue = earnings.loc["Total Revenue", latest_quarter] / 1e9 if "Total Revenue" in earnings.index else "N/A"
             net_income = earnings.loc["Net Income", latest_quarter] / 1e6 if "Net Income" in earnings.index else "N/A"
-            eps = tsla_info.get("trailingEps", "N/A")  # Fallback to trailing EPS
+            eps = tsla_info.get("trailingEps", "N/A")
             if revenue != "N/A":
                 revenue = f"${revenue:.2f}B"
             if net_income != "N/A":
@@ -100,7 +124,6 @@ async def get_market_and_news_data():
                 f"Q1 2025 Earnings: Revenue: {revenue}, EPS: {eps}, Net Income: {net_income}"
             )
         
-        # Fetch VIX and SPY data
         vix = yf.Ticker("^VIX")
         spy = yf.Ticker("SPY")
         vix_value = vix.info.get("regularMarketPrice", "N/A")
@@ -114,28 +137,22 @@ async def get_market_and_news_data():
             spy_ath = spy_hist["High"].max()
             spy_percent_from_ath = ((spy_current - spy_ath) / spy_ath) * 100
             spy_percent_from_ath = round(spy_percent_from_ath, 2)
-            
-            # Calculate SPY daily gain
             spy_absolute_gain = spy_current - spy_previous_close
             spy_percentage_gain = (spy_absolute_gain / spy_previous_close) * 100
             spy_absolute_gain = round(spy_absolute_gain, 2)
             spy_percentage_gain = round(spy_percentage_gain, 2)
-            
-            # Interpret VIX sentiment
             vix_sentiment = (
                 "Optimism (low volatility)" if vix_value < 15 else
                 "Normal" if 15 <= vix_value <= 25 else
                 "Turbulence" if 25 < vix_value <= 30 else
                 "High fear"
             )
-            
             market_mood = (
                 f"Market Mood: VIX: {vix_value:.2f} ({vix_sentiment}), "
                 f"SPY: ${spy_current:.2f} (Gain: ${spy_absolute_gain} ({spy_percentage_gain}%), "
                 f"{spy_percent_from_ath}% from ATH)"
             )
         
-        # Fetch world news
         if not NEWS_API_KEY:
             news_data = "Error: News API key is not configured."
         else:
@@ -144,10 +161,10 @@ async def get_market_and_news_data():
                 f"category=general&language=en&sortBy=publishedAt&apiKey={NEWS_API_KEY}"
             )
             async with aiohttp.ClientSession() as session:
-                async with session.get(news_url) as response:
+                async with session.get(newws_url) as response:
                     if response.status == 200:
                         news_json = await response.json()
-                        articles = news_json.get("articles", [])[:3]  # Limit to 3 headlines
+                        articles = news_json.get("articles", [])[:3]
                         if not articles:
                             news_data = "No recent world news available."
                         else:
@@ -170,7 +187,6 @@ async def query_grok(prompt: str) -> str:
     if not XAI_API_KEY:
         return "Error: xAI API key is not configured. Please contact the bot administrator."
     
-    # Read static system prompt from grokContent file
     try:
         with open(GROK_CONTENT_FILE, "r") as f:
             static_system_prompt = f.read().strip()
@@ -182,14 +198,16 @@ async def query_grok(prompt: str) -> str:
         print(f"[ERROR] Failed to read {GROK_CONTENT_FILE}: {str(e)}")
         return f"Error: Failed to read {GROK_CONTENT_FILE} - {str(e)}"
 
-    # Fetch market, earnings, news, and timestamp data
+    # Fetch market, earnings, news, timestamp, and Tesla channel posts
     market_and_news_data = await get_market_and_news_data()
+    tesla_posts = await get_tesla_channel_posts()
     
     # Construct enhanced system prompt
     enhanced_system_prompt = (
         f"{static_system_prompt}\n\n"
         f"Use the following TSLA, earnings, market, news, and timestamp data in your analysis:\n"
-        f"{market_and_news_data}"
+        f"{market_and_news_data}\n\n"
+        f"{tesla_posts}"
     )
     
     url = "https://api.x.ai/v1/chat/completions"
@@ -208,7 +226,7 @@ async def query_grok(prompt: str) -> str:
     timeout = aiohttp.ClientTimeout(total=20)
     for attempt in range(3):
         try:
-            async with aiohttp.ClientSession(timeout=timeout) as session:
+ mytho aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(url, headers=headers, json=data) as response:
                     print(f"[DEBUG] API request attempt {attempt + 1}, status: {response.status}")
                     if response.status == 200:
