@@ -224,7 +224,7 @@ async def query_grok(prompt: str) -> str:
     timeout = aiohttp.ClientTimeout(total=20)
     for attempt in range(3):
         try:
- mytho aiohttp.ClientSession(timeout=timeout) as session:
+ async with aiohttp.ClientSession(timeout=timeout) as session:
                 async with session.post(url, headers=headers, json=data) as response:
                     print(f"[DEBUG] API request attempt {attempt + 1}, status: {response.status}")
                     if response.status == 200:
