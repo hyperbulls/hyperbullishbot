@@ -41,12 +41,21 @@ async def get_tesla_channel_posts():
                 timestamp = message.created_at.astimezone(ZoneInfo("Europe/Amsterdam")).strftime("%Y-%m-%d %H:%M:%S")
                 content = message.content.strip()
                 
-                # Extract X URL if present (e.g., https://x.com/username/status/123456789)
+                # Extract tweet text from embed if available
+                tweet_text = content
+                if message.embeds:
+                    embed = message.embeds[0]  # Assuming the first embed is the tweet
+                    if embed.description:  # Tweet text is often in the description field
+                        tweet_text = embed.description.strip()
+                    elif embed.title:  # Fallback to title if description is absent
+                        tweet_text = embed.title.strip()
+                
+                # Extract X URL if present
                 url_match = re.search(r'https?://x\.com/[^\s]+/status/(\d+)', content)
                 url = url_match.group(0) if url_match else None
                 
-                # Format message with timestamp, author, and full content
-                msg_line = f"[{timestamp} CEST] {message.author.name}: {content}"
+                # Format message with timestamp, author, and tweet text (from embed or content)
+                msg_line = f"[{timestamp} CEST] {message.author.name}: {tweet_text}"
                 if url:
                     msg_line += f" (URL: {url})"
                 
