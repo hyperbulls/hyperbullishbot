@@ -1,9 +1,10 @@
+# data_fetcher.py
 import yfinance as yf
 import aiohttp
 import asyncio
 from datetime import datetime
 from config import TESLA_CHANNEL_ID, CEST, NEWS_API_KEY
-from discord import Client, Forbidden
+from discord import Client, Forbidden, Embed
 import re
 
 async def get_tesla_channel_posts(client: Client):
@@ -21,68 +22,54 @@ async def get_tesla_channel_posts(client: Client):
                 timestamp = message.created_at.astimezone(CEST).strftime("%Y-%m-%d %H:%M:%S")
                 content = message.content.strip()
                 
-                # Extract tweet text from embed if available
+                # Extract full tweet text and embed details
                 tweet_text = content
                 image_urls = []
+                embed_details = []
                 if message.embeds:
-                    embed = message.embeds[0]  # First embed for the original tweet
-                    if embed.description:  # Tweet text is often in the description field
-                        tweet_text = embed.description.strip()
-                    elif embed.title:  # Fallback to title if description is absent
-                        tweet_text = embed.title.strip()
-                    
-                    # Extract image URL from the first embed
-                    if embed.image and embed.image.url:
-                        image_urls.append(embed.image.url)
-                    
-                    # Handle second embed (quoted tweet) if it exists
-                    if len(message.embeds) > 1:
-                        quoted_embed = message.embeds[1]
-                        quoted_text = None
-                        # Try description first
-                        if quoted_embed.description:
-                            quoted_text = quoted_embed.description.strip()
-                        # Try title as fallback
-                        elif quoted_embed.title:
-                            quoted_text = quoted_embed.title.strip()
-                        # Try footer text or fields if available
-                        elif quoted_embed.footer and quoted_embed.footer.text:
-                            quoted_text = quoted_embed.footer.text.strip()
-                        elif quoted_embed.fields:
-                            quoted_text = " ".join(field.value.strip() for field in quoted_embed.fields if field.value)
-                        
-                        # If still no text, use a more informative fallback
-                        if quoted_text is None:
-                            print(f"[DEBUG] No text fields in second embed: {quoted_embed.to_dict()}")
-                            quoted_text = "Quoted tweet text unavailable (check embed structure)"
-                        tweet_text += f" quoted: {quoted_text}"
-                        
-                        # Extract image URL from the quoted embed
-                        if quoted_embed.image and quoted_embed.image.url:
-                            image_urls.append(quoted_embed.image.url)
+                    for i, embed in enumerate(message.embeds, 1):
+                        embed_dict = {
+                            "index": i,
+                            "title": embed.title if embed.title else "No title",
+                            "description": embed.description if embed.description else "No description",
+                            "fields": {field.name: field.value for field in embed.fields} if embed.fields else "No fields",
+                            "url": embed.url if embed.url else "No URL",
+                            "image_url": embed.image.url if embed.image and embed.image.url else "No image URL",
+                            "footer": embed.footer.text if embed.footer and embed.footer.text else "No footer"
+                        }
+                        embed_details.append(embed_dict)
+                        if embed.image and embed.image.url:
+                            image_urls.append(embed.image.url)
+                
+                # Construct full message with embed details
+                if embed_details:
+                    tweet_text = "\n".join(
+                        f"Embed {d['index']}: Title: {d['title']}, Description: {d['description']}, "
+                        f"Fields: {d['fields']}, URL: {d['url']}, Image URL: {d['image_url']}, Footer: {d['footer']}"
+                        for d in embed_details
+                    )
+                else:
+                    tweet_text = content  # Fallback to raw content if no embeds
                 
                 # Extract X URL if present
                 url_match = re.search(r'https?://x\.com/[^\s]+/status/(\d+)', content)
                 url = url_match.group(0) if url_match else None
                 
-                # Format message with timestamp, author, and tweet text (including quoted text if present)
+                # Format message with full details
                 msg_line = f"[{timestamp} CEST] {message.author.name}: {tweet_text}"
                 if url:
                     msg_line += f" (URL: {url})"
                 
-                messages.append((msg_line, image_urls))  # Store as tuple with list of image URLs
+                messages.append((msg_line, image_urls))
         
-        # Log the number of posts imported with full content and preview
+        # Log the number of posts imported with full content
         if messages:
             print(f"[DEBUG] Imported {len(messages)} Tesla posts from channel {TESLA_CHANNEL_ID}:")
             for i, (msg, img_urls) in enumerate(messages, 1):
-                print(f"[DEBUG] Full Post {i}: {msg}")  # Log full length post
+                print(f"[DEBUG] Full Post {i}:\n{msg}")  # Use \n to ensure full multiline output
                 if img_urls:
                     for j, img_url in enumerate(img_urls):
                         print(f"[DEBUG] Full Post {i} Image URL {j}: {img_url}")
-                preview = msg[50:]  # Skip timestamp and author for preview
-                preview = preview[:50] + "..." if len(preview) > 50 else preview
-                print(f"[DEBUG] Post {i} Preview: {preview}")
         else:
             print(f"[DEBUG] No valid Tesla posts found in channel {TESLA_CHANNEL_ID}")
         
@@ -99,8 +86,8 @@ async def get_tesla_channel_posts(client: Client):
 
 async def get_market_and_news_data():
     try:
-        # Get current date and time in CEST (set to 12:34 PM CEST, June 22, 2025)
-        current_time = datetime(2025, 6, 22, 12, 34).replace(tzinfo=CEST).strftime("%Y-%m-%d %H:%M:%S")
+        # Get current date and time in CEST (set to 01:42 PM CEST, June 22, 2025)
+        current_time = datetime(2025, 6, 22, 13, 42).replace(tzinfo=CEST).strftime("%Y-%m-%d %H:%M:%S")
         timestamp = f"Data as of: {current_time} CEST"
         
         # Fetch TSLA data
