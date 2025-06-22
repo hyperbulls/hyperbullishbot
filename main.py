@@ -53,7 +53,23 @@ async def get_tesla_channel_posts():
                     # Handle second embed (quoted tweet) if it exists
                     if len(message.embeds) > 1:
                         quoted_embed = message.embeds[1]
-                        quoted_text = quoted_embed.description.strip() if quoted_embed.description else quoted_embed.title.strip() if quoted_embed.title else "Quoted tweet text unavailable"
+                        quoted_text = None
+                        # Try description first
+                        if quoted_embed.description:
+                            quoted_text = quoted_embed.description.strip()
+                        # Try title as fallback
+                        elif quoted_embed.title:
+                            quoted_text = quoted_embed.title.strip()
+                        # Try footer text or fields if available
+                        elif quoted_embed.footer and quoted_embed.footer.text:
+                            quoted_text = quoted_embed.footer.text.strip()
+                        elif quoted_embed.fields:
+                            quoted_text = " ".join(field.value.strip() for field in quoted_embed.fields if field.value)
+                        
+                        # If still no text, use a more informative fallback
+                        if quoted_text is None:
+                            print(f"[DEBUG] No text fields in second embed: {quoted_embed.to_dict()}")
+                            quoted_text = "Quoted tweet text unavailable (check embed structure)"
                         tweet_text += f" quoted: {quoted_text}"
                 
                 # Extract X URL if present
@@ -67,13 +83,14 @@ async def get_tesla_channel_posts():
                 
                 messages.append(msg_line)  # No character limit to capture full tweet text
         
-        # Log the number of posts imported with a preview
+        # Log the number of posts imported with full content and preview
         if messages:
             print(f"[DEBUG] Imported {len(messages)} Tesla posts from channel {TESLA_CHANNEL_ID}:")
             for i, msg in enumerate(messages, 1):
+                print(f"[DEBUG] Full Post {i}: {msg}")  # Log full length post
                 preview = msg[50:]  # Skip timestamp and author for preview
                 preview = preview[:50] + "..." if len(preview) > 50 else preview
-                print(f"[DEBUG] Post {i}: {preview}")
+                print(f"[DEBUG] Post {i} Preview: {preview}")
         else:
             print(f"[DEBUG] No valid Tesla posts found in channel {TESLA_CHANNEL_ID}")
         
