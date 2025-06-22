@@ -43,7 +43,7 @@ async def get_tesla_channel_posts():
                 
                 # Extract tweet text from embed if available
                 tweet_text = content
-                image_url = None
+                image_urls = []
                 if message.embeds:
                     embed = message.embeds[0]  # First embed for the original tweet
                     if embed.description:  # Tweet text is often in the description field
@@ -53,7 +53,7 @@ async def get_tesla_channel_posts():
                     
                     # Extract image URL from the first embed
                     if embed.image and embed.image.url:
-                        image_url = embed.image.url
+                        image_urls.append(embed.image.url)
                     
                     # Handle second embed (quoted tweet) if it exists
                     if len(message.embeds) > 1:
@@ -76,6 +76,10 @@ async def get_tesla_channel_posts():
                             print(f"[DEBUG] No text fields in second embed: {quoted_embed.to_dict()}")
                             quoted_text = "Quoted tweet text unavailable (check embed structure)"
                         tweet_text += f" quoted: {quoted_text}"
+                        
+                        # Extract image URL from the quoted embed
+                        if quoted_embed.image and quoted_embed.image.url:
+                            image_urls.append(quoted_embed.image.url)
                 
                 # Extract X URL if present
                 url_match = re.search(r'https?://x\.com/[^\s]+/status/(\d+)', content)
@@ -86,15 +90,16 @@ async def get_tesla_channel_posts():
                 if url:
                     msg_line += f" (URL: {url})"
                 
-                messages.append((msg_line, image_url))  # Store as tuple with image URL
+                messages.append((msg_line, image_urls))  # Store as tuple with list of image URLs
         
         # Log the number of posts imported with full content and preview
         if messages:
             print(f"[DEBUG] Imported {len(messages)} Tesla posts from channel {TESLA_CHANNEL_ID}:")
-            for i, (msg, img_url) in enumerate(messages, 1):
+            for i, (msg, img_urls) in enumerate(messages, 1):
                 print(f"[DEBUG] Full Post {i}: {msg}")  # Log full length post
-                if img_url:
-                    print(f"[DEBUG] Full Post {i} Image URL: {img_url}")
+                if img_urls:
+                    for j, img_url in enumerate(img_urls):
+                        print(f"[DEBUG] Full Post {i} Image URL {j}: {img_url}")
                 preview = msg[50:]  # Skip timestamp and author for preview
                 preview = preview[:50] + "..." if len(preview) > 50 else preview
                 print(f"[DEBUG] Post {i} Preview: {preview}")
@@ -122,9 +127,9 @@ def calculate_rsi(data, periods=14):
 
 async def get_market_and_news_data():
     try:
-        # Get current date and time in CEST
+        # Get current date and time in CEST (set to 12:21 PM CEST, June 22, 2025 for this context)
         cest = ZoneInfo("Europe/Amsterdam")
-        current_time = datetime.now(cest).strftime("%Y-%m-%d %H:%M:%S")
+        current_time = datetime(2025, 6, 22, 12, 21).replace(tzinfo=cest).strftime("%Y-%m-%d %H:%M:%S")
         timestamp = f"Data as of: {current_time} CEST"
         
         # Fetch TSLA data
