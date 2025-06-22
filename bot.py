@@ -1,3 +1,4 @@
+# bot.py
 import discord
 from dotenv import load_dotenv
 from config import TOKEN, TESLA_CHANNEL_ID
@@ -56,13 +57,13 @@ async def on_message(message: discord.Message):
                 channel = client.get_channel(TESLA_CHANNEL_ID)
                 async for msg in channel.history(limit=1):
                     if msg.embeds:
+                        print(f"[DEBUG] Found {len(msg.embeds)} embeds in latest message")
                         image_urls = []
-                        if msg.embeds[0].image and msg.embeds[0].image.url:
-                            image_urls.append(msg.embeds[0].image.url)
-                            print(f"[DEBUG] Extracted image URL from original embed: {msg.embeds[0].image.url}")
-                        if len(msg.embeds) > 1 and msg.embeds[1].image and msg.embeds[1].image.url:
-                            image_urls.append(msg.embeds[1].image.url)
-                            print(f"[DEBUG] Extracted image URL from quoted embed: {msg.embeds[1].image.url}")
+                        for i, embed in enumerate(msg.embeds):
+                            print(f"[DEBUG] Processing embed {i + 1}: {embed.to_dict()}")
+                            if embed.image and embed.image.url:
+                                image_urls.append(embed.image.url)
+                                print(f"[DEBUG] Extracted image URL from embed {i + 1}: {embed.image.url}")
                         
                         if image_urls:
                             files = []
@@ -70,6 +71,7 @@ async def on_message(message: discord.Message):
                                 print(f"[DEBUG] Attempting to download image {i} from: {image_url}")
                                 async with aiohttp.ClientSession() as session:
                                     async with session.get(image_url) as resp:
+                                        print(f"[DEBUG] HTTP response status for {image_url}: {resp.status}")
                                         if resp.status == 200:
                                             image_data = await resp.read()
                                             filename = f"temp_image{i}.png"
@@ -79,7 +81,7 @@ async def on_message(message: discord.Message):
                                             files.append(discord.File(filename, filename=f"image{i}.png"))
                                             print(f"[DEBUG] Added file object for: {filename}")
                                         else:
-                                            print(f"[ERROR] Failed to download image from {image_url}, status: {resp.status}")
+                                            print(f"[ERROR] Failed to download image from {image_url}, status: {resp.status}, reason: {resp.reason}")
                             
                             if files:
                                 print(f"[DEBUG] Sending response with {len(files)} files")
@@ -95,7 +97,7 @@ async def on_message(message: discord.Message):
                                 return
                 
                 # If no images or error, send text only
-                print("[DEBUG] No images to send, sending text only")
+                print("[DEBUG] No images to send or error occurred, sending text only")
                 await message.channel.send(response)
         except discord.errors.Forbidden:
             print(f"[ERROR] Missing permissions in channel {message.channel.id}")
