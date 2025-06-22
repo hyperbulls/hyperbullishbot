@@ -7,6 +7,7 @@ from grok_api import query_grok
 from utils import cleanup_files
 import aiohttp
 import os
+import json
 
 # Load environment variables (already handled in config.py, but included for safety)
 load_dotenv()
@@ -56,14 +57,25 @@ async def on_message(message: discord.Message):
                 # Fetch the latest Tesla post and its images
                 channel = client.get_channel(TESLA_CHANNEL_ID)
                 async for msg in channel.history(limit=1):
+                    print(f"[DEBUG] Latest message content: {msg.content}")
                     if msg.embeds:
                         print(f"[DEBUG] Found {len(msg.embeds)} embeds in latest message")
                         image_urls = []
                         for i, embed in enumerate(msg.embeds):
-                            print(f"[DEBUG] Processing embed {i + 1}: {embed.to_dict()}")
+                            embed_dict = embed.to_dict()
+                            print(f"[DEBUG] Embed {i + 1} raw data: {json.dumps(embed_dict, indent=2)}")
+                            # Check standard image field
                             if embed.image and embed.image.url:
                                 image_urls.append(embed.image.url)
-                                print(f"[DEBUG] Extracted image URL from embed {i + 1}: {embed.image.url}")
+                                print(f"[DEBUG] Extracted image URL from embed {i + 1} (image): {embed.image.url}")
+                            # Check thumbnail or other potential image fields
+                            elif embed.thumbnail and embed.thumbnail.url:
+                                image_urls.append(embed.thumbnail.url)
+                                print(f"[DEBUG] Extracted image URL from embed {i + 1} (thumbnail): {embed.thumbnail.url}")
+                            # Fallback to any URL that might contain an image
+                            elif embed.url and "pbs.twimg.com" in embed.url:
+                                image_urls.append(embed.url)
+                                print(f"[DEBUG] Extracted potential image URL from embed {i + 1} (url): {embed.url}")
                         
                         if image_urls:
                             files = []
@@ -115,7 +127,7 @@ async def on_message(message: discord.Message):
             except discord.errors.Forbidden:
                 print(f"[ERROR] Missing permissions to send error message in channel {message.channel.id}")
         except Exception as e:
-            print(f"[ERROR] Unexpected error in on_message: {type(e).__name__}: {str(e)}")
+            print(f"[DEBUG] Unexpected error in on_message: {type(e).__name__}: {str(e)}")
             try:
                 await message.channel.send("Error: An unexpected error occurred.")
             except discord.errors.Forbidden:
