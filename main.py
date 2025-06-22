@@ -43,12 +43,17 @@ async def get_tesla_channel_posts():
                 
                 # Extract tweet text from embed if available
                 tweet_text = content
+                image_url = None
                 if message.embeds:
                     embed = message.embeds[0]  # First embed for the original tweet
                     if embed.description:  # Tweet text is often in the description field
                         tweet_text = embed.description.strip()
                     elif embed.title:  # Fallback to title if description is absent
                         tweet_text = embed.title.strip()
+                    
+                    # Extract image URL from the first embed
+                    if embed.image and embed.image.url:
+                        image_url = embed.image.url
                     
                     # Handle second embed (quoted tweet) if it exists
                     if len(message.embeds) > 1:
@@ -81,13 +86,15 @@ async def get_tesla_channel_posts():
                 if url:
                     msg_line += f" (URL: {url})"
                 
-                messages.append(msg_line)  # No character limit to capture full tweet text
+                messages.append((msg_line, image_url))  # Store as tuple with image URL
         
         # Log the number of posts imported with full content and preview
         if messages:
             print(f"[DEBUG] Imported {len(messages)} Tesla posts from channel {TESLA_CHANNEL_ID}:")
-            for i, msg in enumerate(messages, 1):
+            for i, (msg, img_url) in enumerate(messages, 1):
                 print(f"[DEBUG] Full Post {i}: {msg}")  # Log full length post
+                if img_url:
+                    print(f"[DEBUG] Full Post {i} Image URL: {img_url}")
                 preview = msg[50:]  # Skip timestamp and author for preview
                 preview = preview[:50] + "..." if len(preview) > 50 else preview
                 print(f"[DEBUG] Post {i} Preview: {preview}")
@@ -97,7 +104,7 @@ async def get_tesla_channel_posts():
         if not messages:
             return "No recent Tesla-related posts found in the specified channel."
         
-        return "Newest Tesla Posts:\n" + "\n".join(messages)
+        return "Newest Tesla Posts:\n" + "\n".join(msg for msg, _ in messages)
     except discord.errors.Forbidden:
         print(f"[ERROR] Missing permissions to read messages in channel {TESLA_CHANNEL_ID}")
         return f"Error: Missing permissions to read messages in channel {TESLA_CHANNEL_ID}."
@@ -335,6 +342,24 @@ async def on_message(message: discord.Message):
             async with message.channel.typing():
                 response = await query_grok(query)
                 print(f"[DEBUG] Sending mention response: {response[:50]}...")
+                
+                # Fetch the latest Tesla post and its image
+                channel = client.get_channel(TESLA_CHANNEL_ID)
+                async for msg in channel.history(limit=1):
+                    if msg.embeds and msg.embeds[0].image and msg.embeds[0].image.url:
+                        image_url = msg.embeds[0].image.url
+                        async with aiohttp.ClientSession() as session:
+                            async with session.get(image_url) as resp:
+                                if resp.status == 200:
+                                    image_data = await resp.read()
+                                    with open("temp_image.png", "wb") as f:
+                                        f.write(image_data)
+                                    file = discord.File("temp_image.png", filename="image.png")
+                                    await message.channel.send(content=response, file=file)
+                                    os.remove("temp_image.png")  # Cleanup
+                                    return
+                
+                # If no image or error, send text only
                 await message.channel.send(response)
         except discord.errors.Forbidden:
             print(f"[ERROR] Missing permissions in channel {message.channel.id}")
@@ -349,6 +374,12 @@ async def on_message(message: discord.Message):
             print(f"[ERROR] Failed to send mention response: {type(e).__name__}: {str(e)}")
             try:
                 await message.channel.send("Error: Failed to send response.")
+            except discord.errors.Forbidden:
+                print(f"[ERROR] Missing permissions to send error message in channel {message.channel.id}")
+        except Exception as e:
+            print(f"[ERROR] Unexpected error in on_message: {type(e).__name__}: {str(e)}")
+            try:
+                await message.channel.send("Error: An unexpected error occurred.")
             except discord.errors.Forbidden:
                 print(f"[ERROR] Missing permissions to send error message in channel {message.channel.id}")
 
