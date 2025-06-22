@@ -77,6 +77,9 @@ async def on_message(message: discord.Message):
                                 image_urls.append(embed.url)
                                 print(f"[DEBUG] Extracted potential image URL from embed {i + 1} (url): {embed.url}")
                         
+                        total_images_detected = len(image_urls)
+                        print(f"[DEBUG] Total images detected: {total_images_detected}")
+                        
                         if image_urls:
                             files = []
                             for i, image_url in enumerate(image_urls):
@@ -86,22 +89,36 @@ async def on_message(message: discord.Message):
                                         print(f"[DEBUG] HTTP response status for {image_url}: {resp.status}")
                                         if resp.status == 200:
                                             image_data = await resp.read()
+                                            # Check file size (Discord limit is 8MB or 8388608 bytes)
+                                            if len(image_data) > 8388608:
+                                                print(f"[ERROR] Image {i} from {image_url} exceeds Discord's 8MB limit ({len(image_data)} bytes)")
+                                                continue
                                             filename = f"temp_image{i}.png"
-                                            print(f"[DEBUG] Downloaded image, saving to: {filename}")
+                                            print(f"[DEBUG] Downloaded image, saving to: {filename}, size: {len(image_data)} bytes")
                                             with open(filename, "wb") as f:
                                                 f.write(image_data)
                                             files.append(discord.File(filename, filename=f"image{i}.png"))
                                             print(f"[DEBUG] Added file object for: {filename}")
                                         else:
-                                            print(f"[ERROR] Failed to download image from {image_url}, status: {resp.status}, reason: {resp.reason}")
+                                            print(f"[ERROR] Failed to download image {i} from {image_url}, status: {resp.status}, reason: {resp.reason}")
                             
                             if files:
                                 print(f"[DEBUG] Sending response with {len(files)} files")
                                 try:
                                     await message.channel.send(content=response, files=files)
-                                    print(f"[DEBUG] Successfully sent response with images")
+                                    print(f"[DEBUG] Successfully sent response with {len(files)} images")
                                 except discord.errors.HTTPException as e:
+                                    error_details = getattr(e, 'text', str(e))
                                     print(f"[ERROR] Failed to send message with files: {type(e).__name__}: {str(e)}")
+                                    print(f"[ERROR] Detailed error: {error_details}")
+                                    if "413" in str(e) or "Request Entity Too Large" in str(e):
+                                        print("[ERROR] Possible cause: Total file size exceeds Discord's 8MB per message limit")
+                                    elif "400" in str(e) or "Bad Request" in str(e):
+                                        print("[ERROR] Possible cause: Invalid file format or content")
+                                    elif "429" in str(e) or "Too Many Requests" in str(e):
+                                        print("[ERROR] Possible cause: Rate limit exceeded")
+                                    else:
+                                        print("[ERROR] Unknown Discord API error, check payload or permissions")
                                 except Exception as e:
                                     print(f"[ERROR] Unexpected error sending files: {type(e).__name__}: {str(e)}")
                                 finally:
