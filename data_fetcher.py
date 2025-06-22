@@ -1,11 +1,13 @@
-# data_fetcher.py
 import yfinance as yf
-import aiohttp
-import asyncio
 from datetime import datetime
 from config import TESLA_CHANNEL_ID, CEST, NEWS_API_KEY
-from discord import Client, Forbidden, Embed
+from discord import Client, Forbidden
 import re
+import requests  # Replace aiohttp for synchronous news fetching
+
+def calculate_rsi(prices):
+    # Placeholder for RSI calculation (implement in utils.py if needed)
+    return None
 
 async def get_tesla_channel_posts(client: Client):
     if TESLA_CHANNEL_ID == 0:
@@ -40,16 +42,20 @@ async def get_tesla_channel_posts(client: Client):
                         embed_details.append(embed_dict)
                         if embed.image and embed.image.url:
                             image_urls.append(embed.image.url)
+                        elif embed.thumbnail and embed.thumbnail.url:
+                            image_urls.append(embed.thumbnail.url)
+                        elif embed.url and "pbs.twimg.com" in embed.url:
+                            image_urls.append(embed.url)
                 
-                # Construct full message with embed details
+                # Construct full message with embed details and image URLs
                 if embed_details:
                     tweet_text = "\n".join(
                         f"Embed {d['index']}: Title: {d['title']}, Description: {d['description']}, "
                         f"Fields: {d['fields']}, URL: {d['url']}, Image URL: {d['image_url']}, Footer: {d['footer']}"
                         for d in embed_details
                     )
-                else:
-                    tweet_text = content  # Fallback to raw content if no embeds
+                if image_urls:
+                    tweet_text += f"\nImage URLs: {', '.join(image_urls)}"
                 
                 # Extract X URL if present
                 url_match = re.search(r'https?://x\.com/[^\s]+/status/(\d+)', content)
@@ -84,10 +90,10 @@ async def get_tesla_channel_posts(client: Client):
         print(f"[ERROR] Failed to fetch Tesla channel posts: {type(e).__name__}: {str(e)}")
         return f"Error: Failed to fetch Tesla channel posts - {str(e)}"
 
-async def get_market_and_news_data():
+def get_market_and_news_data():
     try:
-        # Get current date and time in CEST (set to 01:42 PM CEST, June 22, 2025)
-        current_time = datetime(2025, 6, 22, 13, 42).replace(tzinfo=CEST).strftime("%Y-%m-%d %H:%M:%S")
+        # Get current date and time in CEST (set to 08:21 PM CEST, June 22, 2025)
+        current_time = datetime(2025, 6, 22, 20, 21).replace(tzinfo=CEST).strftime("%Y-%m-%d %H:%M:%S")
         timestamp = f"Data as of: {current_time} CEST"
         
         # Fetch TSLA data
@@ -111,7 +117,7 @@ async def get_market_and_news_data():
                 closing_prices = tsla_hist["Close"].round(2).tail(5).to_dict()
                 price_dev = ", ".join([f"{date.strftime('%Y-%m-%d')}: ${price}" for date, price in closing_prices.items()])
                 rsi = calculate_rsi(tsla_hist["Close"]).iloc[-1]
-                rsi_value = round(rsi, 2) if not pd.isna(rsi) else "N/A"
+                rsi_value = round(rsi, 2) if rsi is not None and not pd.isna(rsi) else "N/A"
                 market_cap = tsla_info.get("marketCap", "N/A")
                 pe_ratio = tsla_info.get("trailingPE", "N/A")
                 if market_cap != "N/A":
@@ -181,22 +187,21 @@ async def get_market_and_news_data():
                 f"https://newsapi.org/v2/top-headlines?"
                 f"category=general&language=en&sortBy=publishedAt&apiKey={NEWS_API_KEY}"
             )
-            async with aiohttp.ClientSession() as session:
-                async with session.get(news_url) as response:
-                    if response.status == 200:
-                        news_json = await response.json()
-                        articles = news_json.get("articles", [])[:3]
-                        if not articles:
-                            news_data = "No recent world news available."
-                        else:
-                            news_items = [
-                                f"{i+1}. {article['title']} ({article['source']['name']}, "
-                                f"{datetime.strptime(article['publishedAt'], '%Y-%m-%dT%H:%M:%SZ').strftime('%Y-%m-%d')})"
-                                for i, article in enumerate(articles)
-                            ]
-                            news_data = "Recent World News:\n" + "\n".join(news_items)
-                    else:
-                        news_data = f"Error: Failed to fetch news (status {response.status})."
+            response = requests.get(news_url)
+            if response.status_code == 200:
+                news_json = response.json()
+                articles = news_json.get("articles", [])[:3]
+                if not articles:
+                    news_data = "No recent world news available."
+                else:
+                    news_items = [
+                        f"{i+1}. {article['title']} ({article['source']['name']}, "
+                        f"{datetime.strptime(article['publishedAt'], '%Y-%m-%dT%H:%M:%SZ').strftime('%Y-%m-%d')})"
+                        for i, article in enumerate(articles)
+                    ]
+                    news_data = "Recent World News:\n" + "\n".join(news_items)
+            else:
+                news_data = f"Error: Failed to fetch news (status {response.status_code})."
         
         return f"{tsla_data}\n\n{earnings_data}\n\n{market_mood}\n\n{news_data}\n\n{timestamp}"
     except Exception as e:
