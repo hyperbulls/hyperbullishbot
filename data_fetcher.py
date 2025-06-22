@@ -1,0 +1,217 @@
+import yfinance as yf
+import aiohttp
+import asyncio
+from datetime import datetime
+from config import TESLA_CHANNEL_ID, CEST, NEWS_API_KEY
+from discord import Client, Forbidden
+import re
+
+async def get_tesla_channel_posts(client: Client):
+    if TESLA_CHANNEL_ID == 0:
+        return "Error: Tesla channel ID not configured in .env."
+    
+    try:
+        channel = client.get_channel(TESLA_CHANNEL_ID)
+        if not channel:
+            return f"Error: Channel with ID {TESLA_CHANNEL_ID} not found or inaccessible."
+        
+        messages = []
+        async for message in channel.history(limit=10):
+            if message.content.strip():  # Skip bot messages and empty content
+                timestamp = message.created_at.astimezone(CEST).strftime("%Y-%m-%d %H:%M:%S")
+                content = message.content.strip()
+                
+                # Extract tweet text from embed if available
+                tweet_text = content
+                image_urls = []
+                if message.embeds:
+                    embed = message.embeds[0]  # First embed for the original tweet
+                    if embed.description:  # Tweet text is often in the description field
+                        tweet_text = embed.description.strip()
+                    elif embed.title:  # Fallback to title if description is absent
+                        tweet_text = embed.title.strip()
+                    
+                    # Extract image URL from the first embed
+                    if embed.image and embed.image.url:
+                        image_urls.append(embed.image.url)
+                    
+                    # Handle second embed (quoted tweet) if it exists
+                    if len(message.embeds) > 1:
+                        quoted_embed = message.embeds[1]
+                        quoted_text = None
+                        # Try description first
+                        if quoted_embed.description:
+                            quoted_text = quoted_embed.description.strip()
+                        # Try title as fallback
+                        elif quoted_embed.title:
+                            quoted_text = quoted_embed.title.strip()
+                        # Try footer text or fields if available
+                        elif quoted_embed.footer and quoted_embed.footer.text:
+                            quoted_text = quoted_embed.footer.text.strip()
+                        elif quoted_embed.fields:
+                            quoted_text = " ".join(field.value.strip() for field in quoted_embed.fields if field.value)
+                        
+                        # If still no text, use a more informative fallback
+                        if quoted_text is None:
+                            print(f"[DEBUG] No text fields in second embed: {quoted_embed.to_dict()}")
+                            quoted_text = "Quoted tweet text unavailable (check embed structure)"
+                        tweet_text += f" quoted: {quoted_text}"
+                        
+                        # Extract image URL from the quoted embed
+                        if quoted_embed.image and quoted_embed.image.url:
+                            image_urls.append(quoted_embed.image.url)
+                
+                # Extract X URL if present
+                url_match = re.search(r'https?://x\.com/[^\s]+/status/(\d+)', content)
+                url = url_match.group(0) if url_match else None
+                
+                # Format message with timestamp, author, and tweet text (including quoted text if present)
+                msg_line = f"[{timestamp} CEST] {message.author.name}: {tweet_text}"
+                if url:
+                    msg_line += f" (URL: {url})"
+                
+                messages.append((msg_line, image_urls))  # Store as tuple with list of image URLs
+        
+        # Log the number of posts imported with full content and preview
+        if messages:
+            print(f"[DEBUG] Imported {len(messages)} Tesla posts from channel {TESLA_CHANNEL_ID}:")
+            for i, (msg, img_urls) in enumerate(messages, 1):
+                print(f"[DEBUG] Full Post {i}: {msg}")  # Log full length post
+                if img_urls:
+                    for j, img_url in enumerate(img_urls):
+                        print(f"[DEBUG] Full Post {i} Image URL {j}: {img_url}")
+                preview = msg[50:]  # Skip timestamp and author for preview
+                preview = preview[:50] + "..." if len(preview) > 50 else preview
+                print(f"[DEBUG] Post {i} Preview: {preview}")
+        else:
+            print(f"[DEBUG] No valid Tesla posts found in channel {TESLA_CHANNEL_ID}")
+        
+        if not messages:
+            return "No recent Tesla-related posts found in the specified channel."
+        
+        return "Newest Tesla Posts:\n" + "\n".join(msg for msg, _ in messages)
+    except Forbidden:
+        print(f"[ERROR] Missing permissions to read messages in channel {TESLA_CHANNEL_ID}")
+        return f"Error: Missing permissions to read messages in channel {TESLA_CHANNEL_ID}."
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch Tesla channel posts: {type(e).__name__}: {str(e)}")
+        return f"Error: Failed to fetch Tesla channel posts - {str(e)}"
+
+async def get_market_and_news_data():
+    try:
+        # Get current date and time in CEST (set to 12:34 PM CEST, June 22, 2025)
+        current_time = datetime(2025, 6, 22, 12, 34).replace(tzinfo=CEST).strftime("%Y-%m-%d %H:%M:%S")
+        timestamp = f"Data as of: {current_time} CEST"
+        
+        # Fetch TSLA data
+        tsla = yf.Ticker("TSLA")
+        tsla_info = tsla.info
+        current_price = tsla_info.get("regularMarketPrice", "N/A")
+        previous_close = tsla_info.get("previousClose", "N/A")
+        
+        if current_price == "N/A" or previous_close == "N/A":
+            tsla_data = "Error: Could not retrieve TSLA price data."
+        else:
+            absolute_gain = current_price - previous_close
+            percentage_gain = (absolute_gain / previous_close) * 100
+            absolute_gain = round(absolute_gain, 2)
+            percentage_gain = round(percentage_gain, 2)
+            
+            tsla_hist = tsla.history(period="1mo")
+            if tsla_hist.empty:
+                tsla_data = "Error: Could not retrieve TSLA historical data."
+            else:
+                closing_prices = tsla_hist["Close"].round(2).tail(5).to_dict()
+                price_dev = ", ".join([f"{date.strftime('%Y-%m-%d')}: ${price}" for date, price in closing_prices.items()])
+                rsi = calculate_rsi(tsla_hist["Close"]).iloc[-1]
+                rsi_value = round(rsi, 2) if not pd.isna(rsi) else "N/A"
+                market_cap = tsla_info.get("marketCap", "N/A")
+                pe_ratio = tsla_info.get("trailingPE", "N/A")
+                if market_cap != "N/A":
+                    market_cap = f"${market_cap / 1e9:.2f}B"
+                if pe_ratio != "N/A":
+                    pe_ratio = f"{pe_ratio:.2f}"
+                
+                tsla_data = (
+                    f"Current $TSLA data: Price: ${current_price:.2f}, "
+                    f"Gain: ${absolute_gain} ({percentage_gain}%), "
+                    f"Market Cap: {market_cap}, P/E Ratio: {pe_ratio}, "
+                    f"14-day RSI: {rsi_value}\n"
+                    f"Recent Price Development (last 5 days): {price_dev}"
+                )
+        
+        earnings = tsla.quarterly_financials
+        if earnings.empty:
+            earnings_data = "Error: Could not retrieve TSLA earnings data."
+        else:
+            latest_quarter = earnings.columns[0]
+            revenue = earnings.loc["Total Revenue", latest_quarter] / 1e9 if "Total Revenue" in earnings.index else "N/A"
+            net_income = earnings.loc["Net Income", latest_quarter] / 1e6 if "Net Income" in earnings.index else "N/A"
+            eps = tsla_info.get("trailingEps", "N/A")
+            if revenue != "N/A":
+                revenue = f"${revenue:.2f}B"
+            if net_income != "N/A":
+                net_income = f"${net_income:.2f}M"
+            if eps != "N/A":
+                eps = f"${eps:.2f}"
+            earnings_data = (
+                f"Q1 2025 Earnings: Revenue: {revenue}, EPS: {eps}, Net Income: {net_income}"
+            )
+        
+        vix = yf.Ticker("^VIX")
+        spy = yf.Ticker("SPY")
+        vix_value = vix.info.get("regularMarketPrice", "N/A")
+        spy_current = spy.info.get("regularMarketPrice", "N/A")
+        spy_previous_close = spy.info.get("previousClose", "N/A")
+        
+        spy_hist = spy.history(period="max")
+        if spy_hist.empty or vix_value == "N/A" or spy_current == "N/A" or spy_previous_close == "N/A":
+            market_mood = "Error: Could not retrieve VIX or SPY data."
+        else:
+            spy_ath = spy_hist["High"].max()
+            spy_percent_from_ath = ((spy_current - spy_ath) / spy_ath) * 100
+            spy_percent_from_ath = round(spy_percent_from_ath, 2)
+            spy_absolute_gain = spy_current - spy_previous_close
+            spy_percentage_gain = (spy_absolute_gain / spy_previous_close) * 100
+            spy_absolute_gain = round(spy_absolute_gain, 2)
+            spy_percentage_gain = round(spy_percentage_gain, 2)
+            vix_sentiment = (
+                "Optimism (low volatility)" if vix_value < 15 else
+                "Normal" if 15 <= vix_value <= 25 else
+                "Turbulence" if 25 < vix_value <= 30 else
+                "High fear"
+            )
+            market_mood = (
+                f"Market Mood: VIX: {vix_value:.2f} ({vix_sentiment}), "
+                f"SPY: ${spy_current:.2f} (Gain: ${spy_absolute_gain} ({spy_percentage_gain}%), "
+                f"{spy_percent_from_ath}% from ATH)"
+            )
+        
+        if not NEWS_API_KEY:
+            news_data = "Error: News API key is not configured."
+        else:
+            news_url = (
+                f"https://newsapi.org/v2/top-headlines?"
+                f"category=general&language=en&sortBy=publishedAt&apiKey={NEWS_API_KEY}"
+            )
+            async with aiohttp.ClientSession() as session:
+                async with session.get(news_url) as response:
+                    if response.status == 200:
+                        news_json = await response.json()
+                        articles = news_json.get("articles", [])[:3]
+                        if not articles:
+                            news_data = "No recent world news available."
+                        else:
+                            news_items = [
+                                f"{i+1}. {article['title']} ({article['source']['name']}, "
+                                f"{datetime.strptime(article['publishedAt'], '%Y-%m-%dT%H:%M:%SZ').strftime('%Y-%m-%d')})"
+                                for i, article in enumerate(articles)
+                            ]
+                            news_data = "Recent World News:\n" + "\n".join(news_items)
+                    else:
+                        news_data = f"Error: Failed to fetch news (status {response.status})."
+        
+        return f"{tsla_data}\n\n{earnings_data}\n\n{market_mood}\n\n{news_data}\n\n{timestamp}"
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch market, earnings, news, or timestamp data: {type(e).__name__}: {str(e)}")
+        return "Error: Failed to fetch TSLA, earnings, market, news, or timestamp data."
