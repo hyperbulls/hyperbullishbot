@@ -127,9 +127,9 @@ def calculate_rsi(data, periods=14):
 
 async def get_market_and_news_data():
     try:
-        # Get current date and time in CEST (set to 12:21 PM CEST, June 22, 2025 for this context)
+        # Get current date and time in CEST (set to 12:23 PM CEST, June 22, 2025 for this context)
         cest = ZoneInfo("Europe/Amsterdam")
-        current_time = datetime(2025, 6, 22, 12, 21).replace(tzinfo=cest).strftime("%Y-%m-%d %H:%M:%S")
+        current_time = datetime(2025, 6, 22, 12, 23).replace(tzinfo=cest).strftime("%Y-%m-%d %H:%M:%S")
         timestamp = f"Data as of: {current_time} CEST"
         
         # Fetch TSLA data
@@ -348,23 +348,35 @@ async def on_message(message: discord.Message):
                 response = await query_grok(query)
                 print(f"[DEBUG] Sending mention response: {response[:50]}...")
                 
-                # Fetch the latest Tesla post and its image
+                # Fetch the latest Tesla post and its images
                 channel = client.get_channel(TESLA_CHANNEL_ID)
                 async for msg in channel.history(limit=1):
-                    if msg.embeds and msg.embeds[0].image and msg.embeds[0].image.url:
-                        image_url = msg.embeds[0].image.url
-                        async with aiohttp.ClientSession() as session:
-                            async with session.get(image_url) as resp:
-                                if resp.status == 200:
-                                    image_data = await resp.read()
-                                    with open("temp_image.png", "wb") as f:
-                                        f.write(image_data)
-                                    file = discord.File("temp_image.png", filename="image.png")
-                                    await message.channel.send(content=response, file=file)
-                                    os.remove("temp_image.png")  # Cleanup
-                                    return
+                    if msg.embeds:
+                        image_urls = []
+                        if msg.embeds[0].image and msg.embeds[0].image.url:
+                            image_urls.append(msg.embeds[0].image.url)
+                        if len(msg.embeds) > 1 and msg.embeds[1].image and msg.embeds[1].image.url:
+                            image_urls.append(msg.embeds[1].image.url)
+                        
+                        if image_urls:
+                            files = []
+                            for i, image_url in enumerate(image_urls):
+                                async with aiohttp.ClientSession() as session:
+                                    async with session.get(image_url) as resp:
+                                        if resp.status == 200:
+                                            image_data = await resp.read()
+                                            filename = f"temp_image{i}.png"
+                                            with open(filename, "wb") as f:
+                                                f.write(image_data)
+                                            files.append(discord.File(filename, filename=f"image{i}.png"))
+                            
+                            if files:
+                                await message.channel.send(content=response, files=files)
+                                for filename in [f"temp_image{i}.png" for i in range(len(image_urls))]:
+                                    os.remove(filename)  # Cleanup
+                                return
                 
-                # If no image or error, send text only
+                # If no images or error, send text only
                 await message.channel.send(response)
         except discord.errors.Forbidden:
             print(f"[ERROR] Missing permissions in channel {message.channel.id}")
