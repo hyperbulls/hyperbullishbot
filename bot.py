@@ -1,3 +1,26 @@
+import discord
+from dotenv import load_dotenv
+from config import TOKEN, TESLA_CHANNEL_ID
+from data_fetcher import get_tesla_channel_posts, get_market_and_news_data
+from grok_api import query_grok
+from utils import cleanup_files
+import aiohttp
+import os
+
+# Load environment variables (already handled in config.py, but included for safety)
+load_dotenv()
+
+# === Bot Setup ===
+intents = discord.Intents.default()
+intents.message_content = True
+intents.messages = True  # Ensure message history intent is enabled
+client = discord.Client(intents=intents)
+
+# === On Ready ===
+@client.event
+async def on_ready():
+    print(f"✅ Logged in as {client.user} (ID: {client.user.id})")
+
 # === On Message: Handle Bot Mentions ===
 @client.event
 async def on_message(message: discord.Message):
@@ -95,3 +118,7 @@ async def on_message(message: discord.Message):
                 await message.channel.send("Error: An unexpected error occurred.")
             except discord.errors.Forbidden:
                 print(f"[ERROR] Missing permissions to send error message in channel {message.channel.id}")
+
+# === Start the Bot ===
+if __name__ == "__main__":
+    client.run(TOKEN)
