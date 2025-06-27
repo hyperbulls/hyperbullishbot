@@ -4,6 +4,7 @@ from config import TESLA_CHANNEL_ID, CEST, NEWS_API_KEY
 from discord import Client, Forbidden
 import re
 import requests
+import pandas as pd
 
 def calculate_rsi(prices):
     """
@@ -88,8 +89,8 @@ async def get_tesla_channel_posts(client: Client):
 
 def get_market_and_news_data():
     try:
-        # Get current date and time in CEST (set to 10:20 PM CEST, June 27, 2025)
-        current_time = datetime(2025, 6, 27, 22, 20).replace(tzinfo=CEST).strftime("%Y-%m-%d %H:%M:%S")
+        # Get current date and time in CEST (set to 10:25 PM CEST, June 27, 2025)
+        current_time = datetime(2025, 6, 27, 22, 25).replace(tzinfo=CEST).strftime("%Y-%m-%d %H:%M:%S")
         timestamp = f"Data as of: {current_time} CEST"
         
         # Fetch TSLA data
@@ -154,4 +155,52 @@ def get_market_and_news_data():
         spy_previous_close = spy.info.get("previousClose", "N/A")
         
         spy_hist = spy.history(period="max")
-        if spy_hist.empty or vix_value == "N/A" or spy_current ==
+        if spy_hist.empty or vix_value == "N/A" or spy_current == "N/A" or spy_previous_close == "N/A":
+            market_mood = "Error: Could not retrieve VIX or SPY data."
+        else:
+            spy_ath = spy_hist["High"].max()
+            spy_percent_from_ath = ((spy_current - spy_ath) / spy_ath) * 100
+            spy_percent_from_ath = round(spy_percent_from_ath, 2)
+            spy_absolute_gain = spy_current - spy_previous_close
+            spy_percentage_gain = (spy_absolute_gain / spy_previous_close) * 100
+            spy_absolute_gain = round(spy_absolute_gain, 2)
+            spy_percentage_gain = round(spy_percentage_gain, 2)
+            vix_sentiment = (
+                "Optimism (low volatility)" if vix_value < 15 else
+                "Normal" if 15 <= vix_value <= 25 else
+                "Turbulence" if 25 < vix_value <= 30 else
+                "High fear"
+            )
+            market_mood = (
+                f"Market Mood: VIX: {vix_value:.2f} ({vix_sentiment}), "
+                f"SPY: ${spy_current:.2f} (Gain: ${spy_absolute_gain} ({spy_percentage_gain}%), "
+                f"{spy_percent_from_ath}% from ATH)"
+            )
+        
+        if not NEWS_API_KEY:
+            news_data = "Error: News API key is not configured."
+        else:
+            news_url = (
+                f"https://newsapi.org/v2/top-headlines?"
+                f"category=general&language=en&sortBy=publishedAt&apiKey={NEWS_API_KEY}"
+            )
+            response = requests.get(news_url)
+            if response.status_code == 200:
+                news_json = response.json()
+                articles = news_json.get("articles", [])[:3]
+                if not articles:
+                    news_data = "No recent world news available."
+                else:
+                    news_items = [
+                        f"{i+1}. {article['title']} ({article['source']['name']}, "
+                        f"{datetime.strptime(article['publishedAt'], '%Y-%m-%dT%H:%M:%SZ').strftime('%Y-%m-%d')})"
+                        for i, article in enumerate(articles)
+                    ]
+                    news_data = "Recent World News:\n" + "\n".join(news_items)
+            else:
+                news_data = f"Error: Failed to fetch news (status {response.status_code})."
+        
+        return f"{tsla_data}\n\n{earnings_data}\n\n{market_mood}\n\n{news_data}\n\n{timestamp}"
+    except Exception as e:
+        print(f"[ERROR] Failed to fetch market, earnings, news, or timestamp data: {type(e).__name__}: {str(e)}")
+        return "Error: Failed to fetch TSLA, earnings, market, news, or timestamp data."
