@@ -4,7 +4,6 @@ from config import TOKEN, TESLA_CHANNEL_ID
 from data_fetcher import get_tesla_channel_posts, get_market_and_news_data
 from grok_api import query_grok
 import os
-import json
 
 # Load environment variables (already handled in config.py, but included for safety)
 load_dotenv()
@@ -50,37 +49,6 @@ async def on_message(message: discord.Message):
                 tesla_posts = await get_tesla_channel_posts(client)
                 response = await query_grok(query, market_and_news_data, tesla_posts)
                 print(f"[DEBUG] Sending mention response: {response[:50]}...")
-                
-                # Fetch the latest Tesla post and its image URLs for Grok
-                channel = client.get_channel(TESLA_CHANNEL_ID)
-                async for msg in channel.history(limit=1):
-                    print(f"[DEBUG] Latest message content: {msg.content}")
-                    if msg.embeds:
-                        print(f"[DEBUG] Found {len(msg.embeds)} embeds in latest message")
-                        image_urls = []
-                        for i, embed in enumerate(msg.embeds):
-                            embed_dict = embed.to_dict()
-                            print(f"[DEBUG] Embed {i + 1} raw data: {json.dumps(embed_dict, indent=2)}")
-                            # Check standard image field
-                            if embed.image and embed.image.url:
-                                image_urls.append(embed.image.url)
-                                print(f"[DEBUG] Extracted image URL from embed {i + 1} (image): {embed.image.url}")
-                            # Check thumbnail or other potential image fields
-                            elif embed.thumbnail and embed.thumbnail.url:
-                                image_urls.append(embed.thumbnail.url)
-                                print(f"[DEBUG] Extracted image URL from embed {i + 1} (thumbnail): {embed.thumbnail.url}")
-                            # Fallback to any URL that might contain an image
-                            elif embed.url and "pbs.twimg.com" in embed.url:
-                                image_urls.append(embed.url)
-                                print(f"[DEBUG] Extracted potential image URL from embed {i + 1} (url): {embed.url}")
-                        
-                        total_images_detected = len(image_urls)
-                        print(f"[DEBUG] Total images detected: {total_images_detected}")
-                        if total_images_detected > 0:
-                            # Append image URLs to the query for Grok to describe
-                            query_with_images = f"{query}\n\nImage URLs for description: {', '.join(image_urls)}"
-                            response = await query_grok(query_with_images, market_and_news_data, tesla_posts)
-                            print(f"[DEBUG] Updated response with image URLs: {response[:50]}...")
                 
                 # Send the response (text only)
                 print("[DEBUG] Sending text response")
