@@ -28,14 +28,41 @@ async def on_message(message: discord.Message):
     bot_mentioned = client.user in message.mentions or message.content.lower().startswith(client.user.name.lower())
     
     if bot_mentioned:
+        # Build the full query with direct message, quoted message, and replies
         query = message.content
+        context = []
+
+        # Clean the direct message
         if client.user in message.mentions:
             query = query.replace(f"<@{client.user.id}>", "").strip()
             query = query.replace(f"<@!{client.user.id}>", "").strip()
         elif message.content.lower().startswith(client.user.name.lower()):
             query = query[len(client.user.name):].strip()
 
-        if not query:
+        # Add quoted message (if exists)
+        if message.reference and message.reference.message_id:
+            try:
+                quoted_message = await message.channel.fetch_message(message.reference.message_id)
+                if quoted_message:
+                    quoted_text = quoted_message.content.strip() or "No content"
+                    context.append(f"Quoted by {quoted_message.author.name}: {quoted_text}")
+            except discord.errors.NotFound:
+                print(f"[DEBUG] Quoted message {message.reference.message_id} not found")
+            except discord.errors.Forbidden:
+                print(f"[ERROR] Missing permissions to fetch quoted message in channel {message.channel.id}")
+
+        # Add replies to the original message
+        async for reply in message.channel.history(limit=10, around=message.created_at):
+            if reply.reference and reply.reference.message_id == message.id and reply.id != message.id:
+                reply_text = reply.content.strip() or "No content"
+                context.append(f"Reply by {reply.author.name}: {reply_text}")
+
+        # Combine context with the direct query
+        full_query = query
+        if context:
+            full_query = f"{query}\n\nContext:\n" + "\n".join(context)
+
+        if not full_query.strip():
             try:
                 await message.channel.send("Please ask a question after mentioning me!")
             except discord.errors.Forbidden:
@@ -47,7 +74,7 @@ async def on_message(message: discord.Message):
                 # Fetch data for Grok
                 market_and_news_data = await get_market_and_news_data()
                 tesla_posts = await get_tesla_channel_posts(client)
-                response = await query_grok(query, market_and_news_data, tesla_posts)
+                response = await query_grok(full_query, market_and_news_data, tesla_posts)
                 print(f"[DEBUG] Sending mention response: {response[:50]}...")
                 
                 # Send the response (text only)
