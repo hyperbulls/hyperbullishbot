@@ -72,7 +72,7 @@ async def on_message(message: discord.Message):
         try:
             async with message.channel.typing():
                 # Fetch data for Grok
-                market_and_news_data = await get_market_and_news_data()
+                market_and_news_data = get_market_and_news_data()  # Removed await
                 tesla_posts = await get_tesla_channel_posts(client)
                 response = await query_grok(full_query, market_and_news_data, tesla_posts)
                 print(f"[DEBUG] Sending mention response: {response[:50]}...")
