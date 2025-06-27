@@ -4,6 +4,7 @@ from config import TOKEN, TESLA_CHANNEL_ID
 from data_fetcher import get_tesla_channel_posts, get_market_and_news_data
 from grok_api import query_grok
 import os
+import re
 
 # Load environment variables (already handled in config.py, but included for safety)
 load_dotenv()
@@ -28,7 +29,7 @@ async def on_message(message: discord.Message):
     bot_mentioned = client.user in message.mentions or message.content.lower().startswith(client.user.name.lower())
     
     if bot_mentioned:
-        # Build the full query with direct message, quoted message, and replies
+        # Build the full query with direct message, quoted message, replies, and forwarded messages
         query = message.content
         context = []
 
@@ -45,17 +46,35 @@ async def on_message(message: discord.Message):
                 quoted_message = await message.channel.fetch_message(message.reference.message_id)
                 if quoted_message:
                     quoted_text = quoted_message.content.strip() or "No content"
-                    context.append(f"Quoted by {quoted_message.author.name}: {quoted_text}")
+                    context.append(f"quote: Quoted by {quoted_message.author.name}: {quoted_text}")
             except discord.errors.NotFound:
                 print(f"[DEBUG] Quoted message {message.reference.message_id} not found")
             except discord.errors.Forbidden:
                 print(f"[ERROR] Missing permissions to fetch quoted message in channel {message.channel.id}")
 
+        # Add forwarded messages (detected via embeds with Discord message URLs)
+        if message.embeds:
+            for embed in message.embeds:
+                if embed.url and "discord.com/channels" in embed.url:
+                    match = re.search(r"https://discord\.com/channels/(\d+)/(\d+)/(\d+)", embed.url)
+                    if match:
+                        guild_id, channel_id, message_id = match.groups()
+                        if int(channel_id) == message.channel.id:  # Same channel
+                            try:
+                                forwarded_message = await message.channel.fetch_message(int(message_id))
+                                if forwarded_message:
+                                    forwarded_text = forwarded_message.content.strip() or "No content"
+                                    context.append(f"forwarded: Forwarded by {forwarded_message.author.name}: {forwarded_text}")
+                            except discord.errors.NotFound:
+                                print(f"[DEBUG] Forwarded message {message_id} not found")
+                            except discord.errors.Forbidden:
+                                print(f"[ERROR] Missing permissions to fetch forwarded message in channel {message.channel.id}")
+
         # Add replies to the original message
         async for reply in message.channel.history(limit=10, around=message.created_at):
             if reply.reference and reply.reference.message_id == message.id and reply.id != message.id:
                 reply_text = reply.content.strip() or "No content"
-                context.append(f"Reply by {reply.author.name}: {reply_text}")
+                context.append(f"reply: Reply by {reply.author.name}: {reply_text}")
 
         # Combine context with the direct query
         full_query = query
@@ -72,7 +91,7 @@ async def on_message(message: discord.Message):
         try:
             async with message.channel.typing():
                 # Fetch data for Grok
-                market_and_news_data = get_market_and_news_data()  # Removed await
+                market_and_news_data = get_market_and_news_data()  # Synchronous call
                 tesla_posts = await get_tesla_channel_posts(client)
                 response = await query_grok(full_query, market_and_news_data, tesla_posts)
                 print(f"[DEBUG] Sending mention response: {response[:50]}...")
