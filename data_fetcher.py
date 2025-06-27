@@ -89,8 +89,8 @@ async def get_tesla_channel_posts(client: Client):
 
 def get_market_and_news_data():
     try:
-        # Get current date and time in CEST (set to 10:25 PM CEST, June 27, 2025)
-        current_time = datetime(2025, 6, 27, 22, 25).replace(tzinfo=CEST).strftime("%Y-%m-%d %H:%M:%S")
+        # Get current date and time in CEST (set to 10:30 PM CEST, June 27, 2025)
+        current_time = datetime(2025, 6, 27, 22, 30).replace(tzinfo=CEST).strftime("%Y-%m-%d %H:%M:%S")
         timestamp = f"Data as of: {current_time} CEST"
         
         # Fetch TSLA data
