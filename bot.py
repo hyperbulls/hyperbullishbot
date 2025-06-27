@@ -52,7 +52,7 @@ async def on_message(message: discord.Message):
             except discord.errors.Forbidden:
                 print(f"[ERROR] Missing permissions to fetch quoted message in channel {message.channel.id}")
 
-        # Add forwarded messages (detected via embeds with Discord message URLs)
+        # Add forwarded messages (detected via embeds with Discord message URLs) and process embeds
         if message.embeds:
             for embed in message.embeds:
                 if embed.url and "discord.com/channels" in embed.url:
@@ -64,7 +64,26 @@ async def on_message(message: discord.Message):
                                 forwarded_message = await message.channel.fetch_message(int(message_id))
                                 if forwarded_message:
                                     forwarded_text = forwarded_message.content.strip() or "No content"
-                                    context.append(f"forwarded: Forwarded by {forwarded_message.author.name}: {forwarded_text}")
+                                    # Extract text from embeds in the forwarded message
+                                    embed_text = ""
+                                    if forwarded_message.embeds:
+                                        for fwd_embed in forwarded_message.embeds:
+                                            embed_parts = []
+                                            if fwd_embed.title:
+                                                embed_parts.append(f"Title: {fwd_embed.title}")
+                                            if fwd_embed.description:
+                                                embed_parts.append(f"Description: {fwd_embed.description}")
+                                            if fwd_embed.fields:
+                                                for field in fwd_embed.fields:
+                                                    embed_parts.append(f"Field - {field.name}: {field.value}")
+                                            if embed_parts:
+                                                embed_text = "\n".join(embed_parts)
+                                    # Combine raw content and embed text
+                                    full_forwarded_text = forwarded_text
+                                    if embed_text:
+                                        full_forwarded_text = f"{forwarded_text}\n{embed_text}" if forwarded_text else embed_text
+                                    if full_forwarded_text:
+                                        context.append(f"forwarded: Forwarded by {forwarded_message.author.name}: {full_forwarded_text}")
                             except discord.errors.NotFound:
                                 print(f"[DEBUG] Forwarded message {message_id} not found")
                             except discord.errors.Forbidden:
